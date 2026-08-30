@@ -47,20 +47,14 @@ class Player(arcade.Sprite):
         )
 
         self.speed = 160
-
         self.maxHp = 100
         self.hp = self.maxHp
-
         self.collisionList = collisionList
-
         self.direction = "right"
         self.dead = False
-
         self.targetX = spawnX
         self.targetY = spawnY
-
         self.moving = False
-
         self.debug = True
         self.debugInterval = 0.25
         self.debugTimer = 0
@@ -137,12 +131,8 @@ class Player(arcade.Sprite):
                 self.center_y = self.targetY
                 self.moving = False
             else:
-                self.center_x += (
-                    distanceX / distance * moveDistance
-                )
-                self.center_y += (
-                    distanceY / distance * moveDistance
-                )
+                self.center_x += distanceX / distance * moveDistance
+                self.center_y += distanceY / distance * moveDistance
 
             self.updateTexture()
             return
@@ -152,15 +142,12 @@ class Player(arcade.Sprite):
 
         if arcade.key.W in keys:
             moveY = self.gridSize
-
-        if arcade.key.S in keys:
+        elif arcade.key.S in keys:
             moveY = -self.gridSize
-
-        if arcade.key.A in keys:
+        elif arcade.key.A in keys:
             moveX = -self.gridSize
             self.direction = "left"
-
-        if arcade.key.D in keys:
+        elif arcade.key.D in keys:
             moveX = self.gridSize
             self.direction = "right"
 

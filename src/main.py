@@ -13,20 +13,15 @@ collisionList = scene["collision"]
 
 class Game(arcade.Window):
     def __init__(self):
-        super().__init__(
-            800,
-            600,
-            "Untitled RPG",
-        )
+        super().__init__(800, 600, "Untitled RPG")
 
         self.camera = arcade.Camera2D()
 
         self.keys = set()
 
-        self.player = sprites.Player(
-            tilemap,
-            collisionList,
-        )
+        self.cameraSpeed = 300
+
+        self.player = sprites.Player(tilemap, collisionList)
 
         self.playerList = arcade.SpriteList()
         self.playerList.append(self.player)
@@ -39,16 +34,15 @@ class Game(arcade.Window):
         scene.draw()
         self.playerList.draw()
 
-        if self.player.debug:
-            self.player.drawDebug()
+        # self.player.drawDebug()
 
-            for sprite in collisionList:
-                sprite.draw_hit_box()
+        for sprite in collisionList:
+            sprite.draw_hit_box()
 
     def on_key_press(self, symbol, modifiers):
         self.keys.add(symbol)
 
-        # Test damage.
+        # Test damage with H
         if symbol == arcade.key.H:
             self.player.takeDamage(10)
 
@@ -56,9 +50,26 @@ class Game(arcade.Window):
         self.keys.discard(symbol)
 
     def on_update(self, delta_time):
-        self.player.update(
-            self.keys,
-            delta_time,
+        self.player.update(self.keys, delta_time)
+
+        cameraX = 0
+        cameraY = 0
+
+        if arcade.key.LEFT in self.keys:
+            cameraX -= self.cameraSpeed * delta_time
+
+        if arcade.key.RIGHT in self.keys:
+            cameraX += self.cameraSpeed * delta_time
+
+        if arcade.key.UP in self.keys:
+            cameraY += self.cameraSpeed * delta_time
+
+        if arcade.key.DOWN in self.keys:
+            cameraY -= self.cameraSpeed * delta_time
+
+        self.camera.position = (
+            self.camera.position[0] + cameraX,
+            self.camera.position[1] + cameraY,
         )
 
 
