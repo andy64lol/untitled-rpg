@@ -8,6 +8,7 @@ mapPath = Path("src/maps/map1.tmx")
 tilemap = arcade.load_tilemap(mapPath)
 scene = arcade.Scene.from_tilemap(tilemap)
 
+spikesList = scene["spikes"]
 collisionList = scene["collision"]
 
 
@@ -20,6 +21,9 @@ class Game(arcade.Window):
         self.keys = set()
 
         self.cameraSpeed = 300
+
+        self.spikeDamageCooldown = 1.0
+        self.spikeDamageTimer = 0
 
         self.player = sprites.Player(tilemap, collisionList)
 
@@ -34,15 +38,9 @@ class Game(arcade.Window):
         scene.draw()
         self.playerList.draw()
 
-        # self.player.drawDebug()
-
-        # for sprite in collisionList:
-        #     sprite.draw_hit_box()
-
     def on_key_press(self, symbol, modifiers):
         self.keys.add(symbol)
 
-        # Test damage with H
         if symbol == arcade.key.H:
             self.player.takeDamage(10)
 
@@ -51,6 +49,20 @@ class Game(arcade.Window):
 
     def on_update(self, delta_time):
         self.player.update(self.keys, delta_time)
+
+        self.spikeDamageTimer -= delta_time
+
+        touchingSpikes = arcade.check_for_collision_with_list(
+            self.player,
+            spikesList,
+        )
+
+        if touchingSpikes and self.spikeDamageTimer <= 0:
+            self.player.takeDamage(10)
+            self.spikeDamageTimer = self.spikeDamageCooldown
+
+        if not touchingSpikes:
+            self.spikeDamageTimer = 0
 
         cameraX = 0
         cameraY = 0
