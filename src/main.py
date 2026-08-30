@@ -36,8 +36,8 @@ class Game(arcade.Window):
 
         # self.player.drawDebug()
 
-        for sprite in collisionList:
-            sprite.draw_hit_box()
+        # for sprite in collisionList:
+        #     sprite.draw_hit_box()
 
     def on_key_press(self, symbol, modifiers):
         self.keys.add(symbol)
