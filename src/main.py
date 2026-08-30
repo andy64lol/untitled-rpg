@@ -1,6 +1,7 @@
 from pathlib import Path
 import arcade
 import sprites
+import math
 
 
 mapPath = Path("src/maps/map1.tmx")
@@ -21,6 +22,8 @@ class Game(arcade.Window):
 
         self.camera = arcade.Camera2D()
         self.guiCamera = arcade.Camera2D()
+        self.heartShakeTime = 0
+        self.heartShakeStrength = 2
 
         self.keys = set()
 
@@ -75,7 +78,7 @@ class Game(arcade.Window):
             else:
                 heart.texture = brokenHeartTexture
 
-    def updateHudAlpha(self):
+    def updateHud(self, delta_time):
         movingInput = (
             arcade.key.W in self.keys
             or arcade.key.A in self.keys
@@ -88,8 +91,37 @@ class Game(arcade.Window):
         else:
             alpha = 255
 
-        for heart in self.heartList:
-            heart.alpha = alpha
+        heartsLeft = self.player.hp // 10
+
+        if self.player.hp > 0 and self.player.hp % 10 != 0:
+            heartsLeft += 1
+
+        if heartsLeft <= 3:
+            self.heartShakeTime += delta_time
+
+            for index, heart in enumerate(self.heartList):
+                shakeX = math.sin(self.heartShakeTime * 50 + index) * self.heartShakeStrength
+                shakeY = math.cos(self.heartShakeTime * 60 + index) * self.heartShakeStrength
+
+                heart.center_x = (
+                    20
+                    + index * 36
+                    + shakeX
+                )
+
+                heart.center_y = (
+                    self.height - 20
+                    + shakeY
+                )
+
+                heart.alpha = alpha
+        else:
+            self.heartShakeTime = 0
+
+            for index, heart in enumerate(self.heartList):
+                heart.center_x = 20 + index * 36
+                heart.center_y = self.height - 20
+                heart.alpha = alpha
 
     def on_key_press(self, symbol, modifiers):
         self.keys.add(symbol)
@@ -119,7 +151,7 @@ class Game(arcade.Window):
         if not touchingSpikes:
             self.spikeDamageTimer = 0
 
-        self.updateHudAlpha()
+        self.updateHud(delta_time)
 
         cameraX = 0
         cameraY = 0
