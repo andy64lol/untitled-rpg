@@ -1,8 +1,9 @@
 from pathlib import Path
+from typing import Any
 import arcade
 
 
-playerPath = Path("src/assets/sprites/player.png")
+playerPath = Path(__file__).resolve().parent / "assets" / "sprites" / "player.png"
 
 spriteSheet = arcade.load_spritesheet(playerPath)
 
@@ -14,7 +15,7 @@ frames = spriteSheet.get_texture_grid(
 
 
 class Player(arcade.Sprite):
-    def __init__(self, tilemap, collisionList):
+    def __init__(self, tilemap, collisionList, fountainList):
         self.gridSize = 32
         self.gridOffset = 16
 
@@ -46,10 +47,14 @@ class Player(arcade.Sprite):
             center_y=spawnY,
         )
 
+        self.spawnX = spawnX
+        self.spawnY = spawnY
+
         self.speed = 160
         self.maxHp = 100
         self.hp = self.maxHp
         self.collisionList = collisionList
+        self.fountainList = fountainList
         self.direction = "right"
         self.dead = False
         self.targetX = spawnX
@@ -71,6 +76,34 @@ class Player(arcade.Sprite):
             else:
                 self.texture = frames[2]
 
+    def reset(self):
+        self.hp = self.maxHp
+        self.dead = False
+        self.direction = "right"
+        self._placeAt(self.spawnX, self.spawnY)
+
+    def saveState(self) -> dict[str, Any]:
+        return {
+            "x": self.center_x,
+            "y": self.center_y,
+            "hp": self.hp,
+            "direction": self.direction,
+        }
+
+    def loadState(self, state: dict[str, Any]):
+        self.hp = max(0, min(int(state["hp"]), self.maxHp))
+        self.dead = self.hp == 0
+        self.direction = state.get("direction", "right")
+        self._placeAt(float(state["x"]), float(state["y"]))
+
+    def _placeAt(self, x, y):
+        self.center_x = x
+        self.center_y = y
+        self.targetX = x
+        self.targetY = y
+        self.moving = False
+        self.updateTexture()
+
     def takeDamage(self, damage):
         if self.dead:
             return
@@ -82,6 +115,19 @@ class Player(arcade.Sprite):
             self.dead = True
             self.moving = False
 
+        self.updateTexture()
+
+    def bumpedFountain(self, collision) -> bool:
+        return any(
+            sprite in self.fountainList
+            for sprite in collision
+        )
+
+    def heal(self, amount):
+        if self.dead:
+            return
+
+        self.hp = min(self.hp + amount, self.maxHp)
         self.updateTexture()
 
     def checkCollision(self, targetX, targetY):
@@ -101,7 +147,7 @@ class Player(arcade.Sprite):
 
         return collision
 
-    def update(self, keys, delta_time):
+    def updatePlayer(self, keys, delta_time) -> bool:
         if self.moving and self.debug:
             self.debugTimer += delta_time
 
@@ -117,7 +163,7 @@ class Player(arcade.Sprite):
 
         if self.dead:
             self.updateTexture()
-            return
+            return False
 
         if self.moving:
             distanceX = self.targetX - self.center_x
@@ -135,7 +181,7 @@ class Player(arcade.Sprite):
                 self.center_y += distanceY / distance * moveDistance
 
             self.updateTexture()
-            return
+            return False
 
         moveX = 0
         moveY = 0
@@ -153,7 +199,7 @@ class Player(arcade.Sprite):
 
         if moveX == 0 and moveY == 0:
             self.updateTexture()
-            return
+            return False
 
         targetX = self.center_x + moveX
         targetY = self.center_y + moveY
@@ -161,6 +207,9 @@ class Player(arcade.Sprite):
         collision = self.checkCollision(targetX, targetY)
 
         if collision:
+            if self.bumpedFountain(collision):
+                return True
+
             if self.debug:
                 print(
                     f"COLLISION at "
@@ -177,13 +226,14 @@ class Player(arcade.Sprite):
                         f"{sprite.height:.0f})"
                     )
 
-            return
+            return False
 
         self.targetX = targetX
         self.targetY = targetY
         self.moving = True
 
         self.updateTexture()
+        return False
 
     def drawDebug(self):
         self.draw_hit_box()
