@@ -155,6 +155,9 @@ class MainMenu:
                 - index * step
             )
 
+        self.mouse_x = min(self.mouse_x, width)
+        self.mouse_y = min(self.mouse_y, height)
+
     def _hovered_button(self) -> MenuButton | None:
         return next(
             (
@@ -203,27 +206,37 @@ class MainMenu:
         self.title.draw(pixelated=True)
         self.buttons.draw(pixelated=True)
 
-        title_left = self.width - EDGE_MARGIN - TITLE_ART_WIDTH * TITLE_SCALE
+        title_sprite = self.title[0]
+        title_center_x = title_sprite.center_x
         arcade.draw_text(
             "ENTER or SPACE to continue" if self.can_resume
             else "ENTER or SPACE to start",
-            title_left,
+            title_center_x,
             110,
             self.MUTED_TEXT,
             font_size=HINT_SIZE,
             font_name=FONT_NAME,
-            anchor_x="left",
+            anchor_x="center",
             anchor_y="center",
         )
         arcade.draw_text(
-            "WASD  MOVE        Z  ATTACK        H  DAMAGE TEST        I  INVENTORY"
-            "        TAB  EQUIPMENT        ESC  MENU        Z  SKIP TEXT",
-            title_left,
-            70,
+            "WASD MOVE   Z ATTACK   H DAMAGE TEST   I INVENTORY",
+            title_center_x,
+            74,
             self.MUTED_TEXT,
             font_size=CONTROLS_SIZE,
             font_name=FONT_NAME,
-            anchor_x="left",
+            anchor_x="center",
+            anchor_y="center",
+        )
+        arcade.draw_text(
+            "TAB EQUIPMENT   ESC MENU   Z SKIP TEXT",
+            title_center_x,
+            56,
+            self.MUTED_TEXT,
+            font_size=CONTROLS_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="center",
             anchor_y="center",
         )
 

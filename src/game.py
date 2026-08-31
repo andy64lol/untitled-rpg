@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass
+from typing import Any
 
 import arcade
 from camera import CameraController
@@ -61,6 +62,8 @@ class GameWindow(arcade.Window):
 
     STAT_BOX_COLOR = (72, 76, 88)
     STAT_TEXT_COLOR = (235, 232, 213)
+    HEART_SIZE = 30
+    HEART_GAP = 2
 
     def __init__(self):
         super().__init__(self.WIDTH, self.HEIGHT, "Untitled RPG", resizable=True)
@@ -75,6 +78,12 @@ class GameWindow(arcade.Window):
         self.stat_bottom = 0
 
         self.game_map = GameMap(MAPS_DIR / "map1.tmx")
+        self.camera.set_world_bounds(
+            0,
+            self.game_map.world_width,
+            0,
+            self.game_map.world_height,
+        )
         self.player = Player(
             self.game_map.tilemap,
             self.game_map.collision,
@@ -114,29 +123,30 @@ class GameWindow(arcade.Window):
         self.options.resize(width, height)
         self.inventory_screen.resize(width, height)
         self._layout_health_hud(height)
-        self._layout_combat_hud(height)
+        self._layout_combat_hud()
 
         if self.currentScreen == "game":
             self.camera.follow(self.player.center_x, self.player.center_y)
 
     def _create_health_hud(self) -> None:
-        heart_size = 30
         heart_count = self.player.maxHp // 10
 
         for index in range(heart_count):
             heart = arcade.Sprite(self.heart_texture, scale=1, pixelated=True)
-            heart.width = heart_size
-            heart.height = heart_size
+            heart.width = self.HEART_SIZE
+            heart.height = self.HEART_SIZE
             self.heart_list.append(heart)
 
         self._layout_health_hud(self.height)
 
     def _layout_health_hud(self, height: int | None = None) -> None:
         hud_height = height if height is not None else self.height
-        heart_size = 30
         for index, heart in enumerate(self.heart_list):
-            heart.center_x = 20 + index * heart_size
+            heart.center_x = self._heart_x(index)
             heart.center_y = hud_height - 20
+
+    def _heart_x(self, index: int) -> float:
+        return 20 + index * (self.HEART_SIZE + self.HEART_GAP)
 
     def _create_combat_hud(self) -> None:
         self.atk_box_left = 20
@@ -207,14 +217,14 @@ class GameWindow(arcade.Window):
         self.camera.follow(self.player.center_x, self.player.center_y)
         self._enter_game()
 
-    def _build_save_state(self) -> dict:
+    def _build_save_state(self) -> dict[str, Any]:
         return {
             "player": self.player.saveState(),
             "inventory": self.inventory.save_state(),
             "equipment": self.equipment.save_state(),
         }
 
-    def _apply_save_state(self, state: dict) -> None:
+    def _apply_save_state(self, state: dict[str, Any]) -> None:
         if "player" in state:
             player_state = state["player"]
             inventory_state = state.get("inventory")
@@ -294,6 +304,7 @@ class GameWindow(arcade.Window):
         self.clear()
 
         if self.currentScreen == "menu":
+            self.camera.use_gui()
             self.menu.draw()
             return
 
@@ -357,7 +368,7 @@ class GameWindow(arcade.Window):
             self.heart_shake_time += delta_time
             for index, heart in enumerate(self.heart_list):
                 heart.center_x = (
-                    20 + index * 32
+                    self._heart_x(index)
                     + math.sin(self.heart_shake_time * 50 + index)
                     * self.heart_shake_strength
                 )
@@ -370,7 +381,7 @@ class GameWindow(arcade.Window):
         else:
             self.heart_shake_time = 0
             for index, heart in enumerate(self.heart_list):
-                heart.center_x = 20 + index * 32
+                heart.center_x = self._heart_x(index)
                 heart.center_y = self.height - 20
                 heart.alpha = alpha
 

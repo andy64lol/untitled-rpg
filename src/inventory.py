@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any
 
 import arcade
 from PIL import ImageFilter
@@ -112,7 +113,7 @@ class Inventory:
 
         return item_id, removed
 
-    def save_state(self) -> dict:
+    def save_state(self) -> dict[str, Any]:
         return {
             "slots": [
                 None
@@ -122,7 +123,7 @@ class Inventory:
             ]
         }
 
-    def load_state(self, state: dict) -> None:
+    def load_state(self, state: dict[str, Any]) -> None:
         saved_slots = state.get("slots", [])
         self.clear()
 
@@ -156,10 +157,10 @@ class Equipment:
         self.slots[slot] = None
         return item_id
 
-    def save_state(self) -> dict:
+    def save_state(self) -> dict[str, Any]:
         return {"slots": dict(self.slots)}
 
-    def load_state(self, state: dict) -> None:
+    def load_state(self, state: dict[str, Any]) -> None:
         self.clear()
         saved_slots = state.get("slots", {})
 
