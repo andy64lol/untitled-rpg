@@ -119,6 +119,42 @@ class MainMenu:
 
         return buttons
 
+    def resize(self, width: int, height: int) -> None:
+        self.width = width
+        self.height = height
+
+        title_sprite = self.title[0]
+        title_sprite.center_x = (
+            width - EDGE_MARGIN - TITLE_ART_WIDTH * TITLE_SCALE / 2
+        )
+        title_sprite.center_y = (
+            height
+            - EDGE_MARGIN
+            - TITLE_ART_HEIGHT * TITLE_SCALE / 2
+            + TITLE_CENTER_OFFSET
+        )
+
+        center_x = BUTTON_MARGIN + BUTTON_ART_WIDTH * BUTTON_SCALE / 2
+        top = height - EDGE_MARGIN - BUTTON_OFFSET_Y
+        step = BUTTON_ART_HEIGHT * BUTTON_SCALE + BUTTON_GAP
+
+        for index, button in enumerate(self.buttons):
+            if button.action == "settings":
+                button.center_x = (
+                    CORNER_MARGIN + SETTINGS_ART_SIZE * SETTINGS_SCALE / 2
+                )
+                button.center_y = (
+                    CORNER_MARGIN + SETTINGS_ART_SIZE * SETTINGS_SCALE / 2
+                )
+                continue
+
+            button.center_x = center_x
+            button.center_y = (
+                top
+                - BUTTON_ART_HEIGHT * BUTTON_SCALE / 2
+                - index * step
+            )
+
     def _hovered_button(self) -> MenuButton | None:
         return next(
             (
@@ -180,7 +216,7 @@ class MainMenu:
             anchor_y="center",
         )
         arcade.draw_text(
-            "WASD  MOVE        H  DAMAGE TEST        I  INVENTORY"
+            "WASD  MOVE        Z  ATTACK        H  DAMAGE TEST        I  INVENTORY"
             "        TAB  EQUIPMENT        ESC  MENU        Z  SKIP TEXT",
             title_left,
             70,

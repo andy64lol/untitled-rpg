@@ -13,7 +13,19 @@ frames = spriteSheet.get_texture_grid(
     count=32,
 )
 
-print(frames[0].width, frames[0].height)
+FACING_OFFSETS = {
+    "up": (0, 1),
+    "down": (0, -1),
+    "left": (-1, 0),
+    "right": (1, 0),
+}
+
+KEY_TO_FACING = {
+    arcade.key.W: "up",
+    arcade.key.S: "down",
+    arcade.key.A: "left",
+    arcade.key.D: "right",
+}
 
 
 class Player(arcade.Sprite):
@@ -58,6 +70,7 @@ class Player(arcade.Sprite):
         self.hp = self.maxHp
         self.collisionList = collisionList
         self.fountainList = fountainList
+        self.facing = "right"
         self.direction = "right"
         self.dead = False
         self.targetX = spawnX
@@ -82,8 +95,27 @@ class Player(arcade.Sprite):
     def reset(self):
         self.hp = self.maxHp
         self.dead = False
+        self.facing = "right"
         self.direction = "right"
         self._placeAt(self.spawnX, self.spawnY)
+
+    def set_facing(self, facing: str) -> None:
+        self.facing = facing
+        if facing in ("left", "right"):
+            self.direction = facing
+        self.updateTexture()
+
+    def set_facing_from_key(self, key: int) -> None:
+        facing = KEY_TO_FACING.get(key)
+        if facing is not None:
+            self.set_facing(facing)
+
+    def get_attack_position(self) -> tuple[float, float]:
+        offset_x, offset_y = FACING_OFFSETS[self.facing]
+        return (
+            self.center_x + offset_x * self.gridSize,
+            self.center_y + offset_y * self.gridSize,
+        )
 
     def saveState(self) -> dict[str, Any]:
         return {
@@ -107,11 +139,12 @@ class Player(arcade.Sprite):
         self.moving = False
         self.updateTexture()
 
-    def takeDamage(self, damage):
+    def takeDamage(self, damage, defense: int = 0):
         if self.dead:
             return
 
-        self.hp -= damage
+        actual_damage = max(0, damage - defense)
+        self.hp -= actual_damage
 
         if self.hp <= 0:
             self.hp = 0
@@ -191,14 +224,16 @@ class Player(arcade.Sprite):
 
         if arcade.key.W in keys:
             moveY = self.gridSize
+            self.set_facing("up")
         elif arcade.key.S in keys:
             moveY = -self.gridSize
+            self.set_facing("down")
         elif arcade.key.A in keys:
             moveX = -self.gridSize
-            self.direction = "left"
+            self.set_facing("left")
         elif arcade.key.D in keys:
             moveX = self.gridSize
-            self.direction = "right"
+            self.set_facing("right")
 
         if moveX == 0 and moveY == 0:
             self.updateTexture()

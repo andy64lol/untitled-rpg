@@ -1,9 +1,13 @@
 import math
+from dataclasses import dataclass
+
 import arcade
 from camera import CameraController
 from config import *
 from dialogue import DialogueBox, OptionBox
-from inventory import COLUMNS, Equipment, Inventory, InventoryScreen
+from font import FONT_NAME
+from inventory import ConfirmResult, Equipment, Inventory, InventoryScreen
+from items import get_combat_stats
 from load import load_state
 from map import GameMap
 from menu import MainMenu
@@ -16,6 +20,29 @@ from paths import (
 )
 import save
 from sprites import Player
+
+
+@dataclass
+class AttackEffect:
+    center_x: float
+    center_y: float
+    timer: float = 0.15
+    size: float = 32
+
+    def update(self, delta_time: float) -> bool:
+        self.timer -= delta_time
+        return self.timer > 0
+
+    def draw(self) -> None:
+        half = self.size / 2
+        alpha = max(0, min(255, int(255 * (self.timer / 0.15))))
+        arcade.draw_lrbt_rectangle_filled(
+            self.center_x - half,
+            self.center_x + half,
+            self.center_y - half,
+            self.center_y + half,
+            (255, 220, 120, alpha),
+        )
 
 
 class GameWindow(arcade.Window):
@@ -32,14 +59,20 @@ class GameWindow(arcade.Window):
     FOUNTAIN_DECLINED = "You chose not to drink."
     FOUNTAIN_WAITING = "Don't drink too much water!"
 
+    STAT_BOX_COLOR = (72, 76, 88)
+    STAT_TEXT_COLOR = (235, 232, 213)
+
     def __init__(self):
-        super().__init__(self.WIDTH, self.HEIGHT, "Untitled RPG")
+        super().__init__(self.WIDTH, self.HEIGHT, "Untitled RPG", resizable=True)
+        self.set_minimum_size(960, 540)
         arcade.set_background_color((10, 12, 20, 255))
 
         self.camera = CameraController(self.width, self.height)
         self.menu = MainMenu(self.width, self.height, ASSETS_DIR)
         self.currentScreen = "menu"
         self.keys: set[int] = set()
+        self.stat_top = 0
+        self.stat_bottom = 0
 
         self.game_map = GameMap(MAPS_DIR / "map1.tmx")
         self.player = Player(
@@ -54,6 +87,7 @@ class GameWindow(arcade.Window):
         self.broken_heart_texture = arcade.load_texture(str(BROKEN_HEART_PATH))
         self.heart_list = arcade.SpriteList()
         self._create_health_hud()
+        self._create_combat_hud()
 
         self.dialogue = DialogueBox(self.width, self.height)
         self.options = OptionBox(self.width, self.height)
@@ -66,10 +100,24 @@ class GameWindow(arcade.Window):
         )
         self._seed_inventory()
 
+        self.attack_effects: list[AttackEffect] = []
         self.heart_shake_time = 0
         self.heart_shake_strength = 2
         self.spike_damage_cooldown = 1.0
         self.spike_damage_timer = 0
+
+    def on_resize(self, width: int, height: int) -> None:
+        super().on_resize(width, height)
+        self.camera.resize(width, height)
+        self.menu.resize(width, height)
+        self.dialogue.resize(width, height)
+        self.options.resize(width, height)
+        self.inventory_screen.resize(width, height)
+        self._layout_health_hud(height)
+        self._layout_combat_hud(height)
+
+        if self.currentScreen == "game":
+            self.camera.follow(self.player.center_x, self.player.center_y)
 
     def _create_health_hud(self) -> None:
         heart_size = 30
@@ -77,16 +125,60 @@ class GameWindow(arcade.Window):
 
         for index in range(heart_count):
             heart = arcade.Sprite(self.heart_texture, scale=1, pixelated=True)
-            heart.center_x = 20 + index * heart_size
-            heart.center_y = self.height - 20
             heart.width = heart_size
             heart.height = heart_size
             self.heart_list.append(heart)
+
+        self._layout_health_hud(self.height)
+
+    def _layout_health_hud(self, height: int | None = None) -> None:
+        hud_height = height if height is not None else self.height
+        heart_size = 30
+        for index, heart in enumerate(self.heart_list):
+            heart.center_x = 20 + index * heart_size
+            heart.center_y = hud_height - 20
+
+    def _create_combat_hud(self) -> None:
+        self.atk_box_left = 20
+        self.def_box_left = 78
+
+        self.atk_value = arcade.Text(
+            "1",
+            0,
+            0,
+            self.STAT_TEXT_COLOR,
+            font_size=12,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+        self.def_value = arcade.Text(
+            "1",
+            0,
+            0,
+            self.STAT_TEXT_COLOR,
+            font_size=12,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+        self._layout_combat_hud()
+
+    def _layout_combat_hud(self) -> None:
+        self.stat_top = self.height - 34
+        self.stat_bottom = self.height - 58
+        center_y = (self.stat_top + self.stat_bottom) / 2
+
+        self.atk_value.x = self.atk_box_left + 34
+        self.atk_value.y = center_y
+        self.def_value.x = self.def_box_left + 34
+        self.def_value.y = center_y
 
     def start_game(self) -> None:
         self.player.reset()
         self._seed_inventory()
         self.update_health()
+        self.update_combat_hud()
         self.camera.follow(self.player.center_x, self.player.center_y)
         self._enter_game()
 
@@ -100,7 +192,7 @@ class GameWindow(arcade.Window):
         self.keys.clear()
 
     def save_game(self) -> None:
-        save.save_state(SAVE_PATH, self.player.saveState())
+        save.save_state(SAVE_PATH, self._build_save_state())
         self.menu.status = "Game saved."
         self.menu.can_resume = True
 
@@ -110,10 +202,44 @@ class GameWindow(arcade.Window):
             self.menu.status = "No saved game found."
             return
 
-        self.player.loadState(state)
+        self._apply_save_state(state)
         self.update_health()
         self.camera.follow(self.player.center_x, self.player.center_y)
         self._enter_game()
+
+    def _build_save_state(self) -> dict:
+        return {
+            "player": self.player.saveState(),
+            "inventory": self.inventory.save_state(),
+            "equipment": self.equipment.save_state(),
+        }
+
+    def _apply_save_state(self, state: dict) -> None:
+        if "player" in state:
+            player_state = state["player"]
+            inventory_state = state.get("inventory")
+            equipment_state = state.get("equipment")
+        else:
+            player_state = state
+            inventory_state = None
+            equipment_state = None
+
+        self.player.loadState(player_state)
+
+        if inventory_state is not None:
+            self.inventory.load_state(inventory_state)
+        else:
+            self._seed_inventory()
+            return
+
+        if equipment_state is not None:
+            self.equipment.load_state(equipment_state)
+        else:
+            self.equipment.clear()
+
+        self.inventory_screen.inventory_panel.select(0)
+        self.update_combat_hud()
+        self.inventory_screen.refresh()
 
     def _enter_game(self) -> None:
         self.currentScreen = "game"
@@ -127,6 +253,42 @@ class GameWindow(arcade.Window):
         self.inventory.add("bronze_sword")
         self.inventory.add("stainless_steel_shield")
         self.inventory_screen.inventory_panel.select(0)
+        self.update_combat_hud()
+
+    def update_combat_hud(self) -> None:
+        attack, defense = get_combat_stats(self.equipment)
+        self.atk_value.text = str(attack)
+        self.def_value.text = str(defense)
+
+    def draw_combat_hud(self) -> None:
+        for label, box_left in (("ATK", self.atk_box_left), ("DEF", self.def_box_left)):
+            arcade.draw_lrbt_rectangle_filled(
+                box_left,
+                box_left + 52,
+                self.stat_bottom,
+                self.stat_top,
+                self.STAT_BOX_COLOR,
+            )
+            arcade.draw_text(
+                label,
+                box_left + 6,
+                (self.stat_top + self.stat_bottom) / 2,
+                self.STAT_TEXT_COLOR,
+                font_size=10,
+                font_name=FONT_NAME,
+                anchor_x="left",
+                anchor_y="center",
+            )
+
+        self.atk_value.draw()
+        self.def_value.draw()
+
+    def player_attack(self) -> None:
+        if self.player.dead or self.player.moving:
+            return
+
+        attack_x, attack_y = self.player.get_attack_position()
+        self.attack_effects.append(AttackEffect(attack_x, attack_y))
 
     def on_draw(self) -> None:
         self.clear()
@@ -136,11 +298,15 @@ class GameWindow(arcade.Window):
             return
 
         self.camera.use_world()
-        self.game_map.draw()
+        self.game_map.draw(pixelated=True)
         self.player_list.draw(pixelated=True)
+
+        for effect in self.attack_effects:
+            effect.draw()
 
         self.camera.use_gui()
         self.heart_list.draw(pixelated=True)
+        self.draw_combat_hud()
         self.inventory_screen.draw()
         self.dialogue.draw()
         self.options.draw()
@@ -245,34 +411,17 @@ class GameWindow(arcade.Window):
             self.dialogue.close()
 
     def _run_inventory_action(self, symbol: int) -> None:
-        if symbol in (arcade.key.I, arcade.key.ESCAPE):
+        action = self.inventory_screen.handle_key(symbol)
+
+        if action == "close":
             self.inventory_screen.close()
             self.keys.clear()
-            return
-
-        if symbol == arcade.key.TAB:
-            self.inventory_screen.switch_focus()
-            return
-
-        if symbol in (arcade.key.ENTER, arcade.key.SPACE):
-            self.inventory_screen.confirm()
-            return
-
-        if self.inventory_screen.focus == "equipment":
-            if symbol == arcade.key.UP:
-                self.inventory_screen.move(-1)
-            elif symbol == arcade.key.DOWN:
-                self.inventory_screen.move(1)
-            return
-
-        if symbol == arcade.key.LEFT:
-            self.inventory_screen.move(-1)
-        elif symbol == arcade.key.RIGHT:
-            self.inventory_screen.move(1)
-        elif symbol == arcade.key.UP:
-            self.inventory_screen.move(-COLUMNS)
-        elif symbol == arcade.key.DOWN:
-            self.inventory_screen.move(COLUMNS)
+        elif isinstance(action, ConfirmResult):
+            if action.action == "consume":
+                self.player.heal(action.heal)
+                self.update_health()
+            elif action.action in ("equip", "unequip"):
+                self.update_combat_hud()
 
     def _run_menu_action(self, action: str | None) -> None:
         if action == "start":
@@ -306,9 +455,17 @@ class GameWindow(arcade.Window):
             self.keys.clear()
             return
 
+        if symbol == arcade.key.Z:
+            self.player_attack()
+            return
+
+        if symbol in (arcade.key.W, arcade.key.A, arcade.key.S, arcade.key.D):
+            self.player.set_facing_from_key(symbol)
+
         self.keys.add(symbol)
         if symbol == arcade.key.H:
-            self.player.takeDamage(10)
+            _, defense = get_combat_stats(self.equipment)
+            self.player.takeDamage(10, defense)
             self.update_health()
 
     def on_key_release(self, symbol, modifiers) -> None:
@@ -334,6 +491,12 @@ class GameWindow(arcade.Window):
         if self.inventory_screen.is_open:
             return
 
+        self.attack_effects = [
+            effect
+            for effect in self.attack_effects
+            if effect.update(delta_time)
+        ]
+
         if self.box_is_open:
             self.dialogue.update(delta_time)
             self.options.update(delta_time)
@@ -358,7 +521,8 @@ class GameWindow(arcade.Window):
             self.game_map.spikes,
         )
         if touching_spikes and self.spike_damage_timer <= 0:
-            self.player.takeDamage(10)
+            _, defense = get_combat_stats(self.equipment)
+            self.player.takeDamage(10, defense)
             self.spike_damage_timer = self.spike_damage_cooldown
             self.update_health()
         elif not touching_spikes:

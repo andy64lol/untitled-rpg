@@ -16,5 +16,5 @@ class GameMap:
         for fountain in self.fountains:
             self.collision.append(fountain)
 
-    def draw(self) -> None:
-        self.scene.draw()
+    def draw(self, pixelated: bool = False) -> None:
+        self.scene.draw(pixelated=pixelated)

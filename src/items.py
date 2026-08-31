@@ -14,6 +14,28 @@ class Item:
     item_type: str
     slot: str | None
     stackable: bool
+    damage: int = 0
+    defense: int = 0
+    heal: int = 0
+
+
+BASE_ATTACK = 1
+BASE_DEFENSE = 1
+
+
+def get_combat_stats(equipment) -> tuple[int, int]:
+    attack = BASE_ATTACK
+    defense = BASE_DEFENSE
+
+    for item_id in equipment.slots.values():
+        if item_id is None:
+            continue
+
+        item = ITEMS[item_id]
+        attack += item.damage
+        defense += item.defense
+
+    return attack, defense
 
 
 def load_items() -> dict[str, Item]:
@@ -29,6 +51,9 @@ def load_items() -> dict[str, Item]:
             item_type=entry["type"],
             slot=entry.get("slot"),
             stackable=entry.get("stackable", False),
+            damage=entry.get("damage", 0),
+            defense=entry.get("defense", 0),
+            heal=entry.get("heal", 0),
         )
 
     return items

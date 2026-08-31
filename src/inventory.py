@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import arcade
+from PIL import ImageFilter
 
 from font import FONT_NAME
 from items import ITEMS
@@ -19,20 +20,44 @@ EQUIPMENT_SLOT_GAP = 8
 
 PANEL_PADDING = 20
 PANEL_GAP = 24
-LABEL_HEIGHT = 28
+LABEL_HEIGHT = 18
 
 PANEL_COLOR = (16, 18, 28, 240)
 SLOT_COLOR = (38, 42, 58)
 SLOT_SELECTED_COLOR = (96, 108, 148)
+EQUIPMENT_SLOT_BG = (72, 76, 88)
 TEXT_COLOR = (235, 232, 213)
-LABEL_SIZE = 14
-COUNT_SIZE = 11
+LABEL_SIZE = 10
+COUNT_SIZE = 10
+
+
+def _load_slot_textures() -> tuple[dict[str, arcade.Texture], dict[str, arcade.Texture]]:
+    normal: dict[str, arcade.Texture] = {}
+    blurred: dict[str, arcade.Texture] = {}
+
+    for slot in EQUIPMENT_SLOTS:
+        texture = arcade.load_texture(str(EQUIPMENT_SLOTS_DIR / f"{slot}.png"))
+        normal[slot] = texture
+        blurred[slot] = arcade.Texture(
+            image=texture.image.filter(ImageFilter.GaussianBlur(radius=2))
+        )
+
+    return normal, blurred
+
+
+SLOT_TEXTURES, BLURRED_SLOT_TEXTURES = _load_slot_textures()
 
 
 @dataclass
 class Stack:
     item_id: str
     count: int = 1
+
+
+@dataclass(frozen=True)
+class ConfirmResult:
+    action: str
+    heal: int = 0
 
 
 class Inventory:
@@ -87,6 +112,29 @@ class Inventory:
 
         return item_id, removed
 
+    def save_state(self) -> dict:
+        return {
+            "slots": [
+                None
+                if stack is None
+                else {"item_id": stack.item_id, "count": stack.count}
+                for stack in self.slots
+            ]
+        }
+
+    def load_state(self, state: dict) -> None:
+        saved_slots = state.get("slots", [])
+        self.clear()
+
+        for index, entry in enumerate(saved_slots):
+            if index >= len(self.slots) or entry is None:
+                continue
+
+            item_id = entry.get("item_id")
+            count = int(entry.get("count", 1))
+            if item_id in ITEMS and count > 0:
+                self.slots[index] = Stack(item_id, count)
+
 
 class Equipment:
     def __init__(self):
@@ -108,6 +156,18 @@ class Equipment:
         self.slots[slot] = None
         return item_id
 
+    def save_state(self) -> dict:
+        return {"slots": dict(self.slots)}
+
+    def load_state(self, state: dict) -> None:
+        self.clear()
+        saved_slots = state.get("slots", {})
+
+        for slot in EQUIPMENT_SLOTS:
+            item_id = saved_slots.get(slot)
+            if item_id in ITEMS:
+                self.slots[slot] = item_id
+
 
 class EquipmentPanel:
     def __init__(self, left: float, top: float, equipment: Equipment):
@@ -125,20 +185,18 @@ class EquipmentPanel:
         self.top = top
         self.bottom = self.top - self.panel_height
 
-        self.frames = arcade.SpriteList()
+        self.slot_icons = arcade.SpriteList()
         self.icons = arcade.SpriteList()
         self.highlights: list[tuple[float, float, float, float]] = []
 
         for index, slot in enumerate(EQUIPMENT_SLOTS):
-            left = self._slot_left()
+            slot_left = self._slot_left()
             bottom = self._slot_bottom(index)
 
-            self.frames.append(
+            self.slot_icons.append(
                 arcade.Sprite(
-                    arcade.load_texture(
-                        str(EQUIPMENT_SLOTS_DIR / f"{slot}.png")
-                    ),
-                    center_x=left + EQUIPMENT_SLOT_SIZE / 2,
+                    SLOT_TEXTURES[slot],
+                    center_x=slot_left + EQUIPMENT_SLOT_SIZE / 2,
                     center_y=bottom + EQUIPMENT_SLOT_SIZE / 2,
                     pixelated=True,
                 )
@@ -147,15 +205,15 @@ class EquipmentPanel:
                 arcade.Sprite(
                     ITEMS["apple"].texture,
                     scale=ICON_SCALE,
-                    center_x=left + EQUIPMENT_SLOT_SIZE / 2,
+                    center_x=slot_left + EQUIPMENT_SLOT_SIZE / 2,
                     center_y=bottom + EQUIPMENT_SLOT_SIZE / 2,
                     pixelated=True,
                 )
             )
             self.highlights.append(
                 (
-                    left,
-                    left + EQUIPMENT_SLOT_SIZE,
+                    slot_left,
+                    slot_left + EQUIPMENT_SLOT_SIZE,
                     bottom,
                     bottom + EQUIPMENT_SLOT_SIZE,
                 )
@@ -168,6 +226,7 @@ class EquipmentPanel:
             TEXT_COLOR,
             font_size=LABEL_SIZE,
             font_name=FONT_NAME,
+            width=self.panel_width - PANEL_PADDING * 2,
             anchor_x="left",
             anchor_y="center",
         )
@@ -188,6 +247,32 @@ class EquipmentPanel:
         self.index = index % len(EQUIPMENT_SLOTS)
         self.refresh()
 
+    def set_position(self, left: float, top: float) -> None:
+        self.left = left
+        self.top = top
+        self.bottom = self.top - self.panel_height
+
+        for index in range(len(EQUIPMENT_SLOTS)):
+            slot_left = self._slot_left()
+            bottom = self._slot_bottom(index)
+            center_x = slot_left + EQUIPMENT_SLOT_SIZE / 2
+            center_y = bottom + EQUIPMENT_SLOT_SIZE / 2
+
+            self.slot_icons[index].center_x = center_x
+            self.slot_icons[index].center_y = center_y
+            self.icons[index].center_x = center_x
+            self.icons[index].center_y = center_y
+            self.highlights[index] = (
+                slot_left,
+                slot_left + EQUIPMENT_SLOT_SIZE,
+                bottom,
+                bottom + EQUIPMENT_SLOT_SIZE,
+            )
+
+        self.label.x = self.left + PANEL_PADDING
+        self.label.y = self.bottom + LABEL_HEIGHT / 2
+        self.label.width = self.panel_width - PANEL_PADDING * 2
+
     def draw(self, focused: bool) -> None:
         arcade.draw_lrbt_rectangle_filled(
             self.left,
@@ -197,17 +282,21 @@ class EquipmentPanel:
             PANEL_COLOR,
         )
 
-        for index, (left, right, bottom, top) in enumerate(self.highlights):
-            if focused and index == self.index:
-                arcade.draw_lrbt_rectangle_filled(
-                    left,
-                    right,
-                    bottom,
-                    top,
-                    SLOT_SELECTED_COLOR,
-                )
+        for index, (slot_left, right, bottom, top) in enumerate(self.highlights):
+            color = (
+                SLOT_SELECTED_COLOR
+                if focused and index == self.index
+                else EQUIPMENT_SLOT_BG
+            )
+            arcade.draw_lrbt_rectangle_filled(
+                slot_left,
+                right,
+                bottom,
+                top,
+                color,
+            )
 
-        self.frames.draw(pixelated=True)
+        self.slot_icons.draw(pixelated=True)
         self.icons.draw(pixelated=True)
         self.label.draw()
 
@@ -223,6 +312,15 @@ class EquipmentPanel:
         )
 
     def refresh(self) -> None:
+        for index, sprite in enumerate(self.slot_icons):
+            slot = EQUIPMENT_SLOTS[index]
+            item_id = self.equipment.slots[slot]
+            sprite.texture = (
+                BLURRED_SLOT_TEXTURES[slot]
+                if item_id is not None
+                else SLOT_TEXTURES[slot]
+            )
+
         for index, sprite in enumerate(self.icons):
             item_id = self.equipment.slots[EQUIPMENT_SLOTS[index]]
             sprite.visible = item_id is not None
@@ -230,11 +328,12 @@ class EquipmentPanel:
             if item_id is not None:
                 sprite.texture = ITEMS[item_id].texture
 
+        slot = self.selected_slot
         item_id = self.selected_item_id
         if item_id is None:
-            self.label.text = EQUIPMENT_SLOTS[self.index].replace("_", " ").title()
+            self.label.text = slot.replace("_", " ").title()
         else:
-            self.label.text = ITEMS[item_id].name
+            self.label.text = f"{ITEMS[item_id].name} · Enter"
 
 
 class InventoryPanel:
@@ -290,6 +389,7 @@ class InventoryPanel:
             TEXT_COLOR,
             font_size=LABEL_SIZE,
             font_name=FONT_NAME,
+            width=self.panel_width - PANEL_PADDING * 2,
             anchor_x="left",
             anchor_y="center",
         )
@@ -305,6 +405,28 @@ class InventoryPanel:
     def select(self, index: int) -> None:
         self.index = index % len(self.inventory.slots)
         self.refresh()
+
+    def set_position(self, left: float, top: float) -> None:
+        self.left = left
+        self.top = top
+        self.bottom = self.top - self.panel_height
+
+        for index in range(len(self.inventory.slots)):
+            column = index % COLUMNS
+            row = index // COLUMNS
+            slot_left = self._slot_left(column)
+            bottom = self._slot_bottom(row)
+            center_x = slot_left + SLOT_SIZE / 2
+            center_y = bottom + SLOT_SIZE / 2
+
+            self.icons[index].center_x = center_x
+            self.icons[index].center_y = center_y
+            self.counts[index].x = slot_left + SLOT_SIZE - 4
+            self.counts[index].y = bottom + 4
+
+        self.label.x = self.left + PANEL_PADDING
+        self.label.y = self.bottom + LABEL_HEIGHT / 2
+        self.label.width = self.panel_width - PANEL_PADDING * 2
 
     def draw(self, focused: bool) -> None:
         arcade.draw_lrbt_rectangle_filled(
@@ -360,9 +482,18 @@ class InventoryPanel:
 
         stack = self.selected
         if stack is None:
-            self.label.text = "Empty"
+            self.label.text = "—"
+            return
+
+        item = ITEMS[stack.item_id]
+        name = item.name
+        if stack.count > 1:
+            name = f"{name} ×{stack.count}"
+
+        if item.item_type == "consumable":
+            self.label.text = f"{name} · Enter"
         else:
-            self.label.text = f"{ITEMS[stack.item_id].name} x{stack.count}"
+            self.label.text = name
 
 
 class InventoryScreen:
@@ -378,6 +509,20 @@ class InventoryScreen:
         self.is_open = False
         self.focus = "inventory"
 
+        combined_left, combined_top, equipment_width = self._layout(width, height)
+        self.equipment_panel = EquipmentPanel(
+            combined_left,
+            combined_top,
+            self.equipment,
+        )
+        self.inventory_panel = InventoryPanel(
+            combined_left + equipment_width + PANEL_GAP,
+            combined_top,
+            self.inventory,
+        )
+
+    @staticmethod
+    def _layout(width: int, height: int) -> tuple[float, float, float]:
         equipment_height = (
             len(EQUIPMENT_SLOTS) * EQUIPMENT_SLOT_SIZE
             + (len(EQUIPMENT_SLOTS) - 1) * EQUIPMENT_SLOT_GAP
@@ -402,15 +547,14 @@ class InventoryScreen:
         combined_left = (width - combined_width) / 2
         combined_top = (height + combined_height) / 2
 
-        self.equipment_panel = EquipmentPanel(
-            combined_left,
-            combined_top,
-            self.equipment,
-        )
-        self.inventory_panel = InventoryPanel(
+        return combined_left, combined_top, equipment_width
+
+    def resize(self, width: int, height: int) -> None:
+        combined_left, combined_top, equipment_width = self._layout(width, height)
+        self.equipment_panel.set_position(combined_left, combined_top)
+        self.inventory_panel.set_position(
             combined_left + equipment_width + PANEL_GAP,
             combined_top,
-            self.inventory,
         )
 
     def toggle(self) -> None:
@@ -425,6 +569,42 @@ class InventoryScreen:
         self.focus = "equipment" if self.focus == "inventory" else "inventory"
         self.refresh()
 
+    def handle_key(self, symbol: int) -> str | ConfirmResult | None:
+        if symbol in (arcade.key.I, arcade.key.ESCAPE):
+            return "close"
+
+        if symbol == arcade.key.TAB:
+            self.switch_focus()
+            return None
+
+        if symbol in (arcade.key.ENTER, arcade.key.SPACE):
+            return self.confirm()
+
+        if self.focus == "equipment":
+            if symbol in (arcade.key.UP, arcade.key.W):
+                self.move(-1)
+            elif symbol in (arcade.key.DOWN, arcade.key.S):
+                self.move(1)
+            elif symbol == arcade.key.RIGHT:
+                self.focus = "inventory"
+                self.refresh()
+            return None
+
+        if symbol in (arcade.key.LEFT, arcade.key.A):
+            if self.inventory_panel.index % COLUMNS == 0:
+                self.focus = "equipment"
+                self.refresh()
+            else:
+                self.move(-1)
+        elif symbol in (arcade.key.RIGHT, arcade.key.D):
+            self.move(1)
+        elif symbol in (arcade.key.UP, arcade.key.W):
+            self.move(-COLUMNS)
+        elif symbol in (arcade.key.DOWN, arcade.key.S):
+            self.move(COLUMNS)
+
+        return None
+
     def move(self, delta: int) -> None:
         if self.focus == "equipment":
             self.equipment_panel.move(delta)
@@ -432,12 +612,25 @@ class InventoryScreen:
 
         self.inventory_panel.move(delta)
 
-    def confirm(self) -> None:
+    def confirm(self) -> ConfirmResult | None:
         if self.focus == "equipment":
-            self._unequip_selected()
-            return
+            if self._unequip_selected():
+                return ConfirmResult("unequip")
+            return None
 
-        self._equip_selected()
+        stack = self.inventory_panel.selected
+        if stack is None:
+            return None
+
+        item = ITEMS[stack.item_id]
+        if item.item_type == "consumable":
+            return self._consume_selected()
+
+        if item.slot is not None:
+            self._equip_selected()
+            return ConfirmResult("equip")
+
+        return None
 
     def draw(self) -> None:
         if not self.is_open:
@@ -470,13 +663,31 @@ class InventoryScreen:
 
         self.refresh()
 
-    def _unequip_selected(self) -> None:
+    def _consume_selected(self) -> ConfirmResult | None:
+        stack = self.inventory_panel.selected
+        if stack is None:
+            return None
+
+        item = ITEMS[stack.item_id]
+        if item.item_type != "consumable" or item.heal <= 0:
+            return None
+
+        removed = self.inventory.remove_at(self.inventory_panel.index, 1)
+        if removed is None:
+            return None
+
+        self.refresh()
+        return ConfirmResult("consume", heal=item.heal)
+
+    def _unequip_selected(self) -> bool:
         slot = self.equipment_panel.selected_slot
         item_id = self.equipment.unequip(slot)
         if item_id is None:
-            return
+            return False
 
         if not self.inventory.add(item_id, 1):
             self.equipment.equip(slot, item_id)
+            return False
 
         self.refresh()
+        return True

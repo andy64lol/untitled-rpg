@@ -78,6 +78,20 @@ class DialogueBox:
     def close(self) -> None:
         self.is_open = False
 
+    def resize(self, width: int, height: int) -> None:
+        box = self.box[0]
+        box.center_x = width / 2
+        box.center_y = BOX_MARGIN + box.height / 2
+
+        self.left = box.left
+        self.top = box.top
+        self.bottom = box.bottom
+        self.text_width = int(box.width) - TEXT_MARGIN * 2
+
+        self.message.x = self.left + TEXT_MARGIN
+        self.message.y = self.top - TEXT_MARGIN
+        self.message.width = self.text_width
+
     def draw(self) -> None:
         if not self.is_open:
             return
@@ -105,6 +119,12 @@ class OptionBox(DialogueBox):
             anchor_y="bottom",
             multiline=True,
         )
+
+    def resize(self, width: int, height: int) -> None:
+        super().resize(width, height)
+        self.option_line.x = self.left + TEXT_MARGIN
+        self.option_line.y = self.bottom + TEXT_MARGIN
+        self.option_line.width = self.text_width
 
     def show_options(self, message: str, options: list[str]) -> None:
         self.show(message)
