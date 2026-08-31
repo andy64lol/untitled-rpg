@@ -13,6 +13,8 @@ frames = spriteSheet.get_texture_grid(
     count=32,
 )
 
+print(frames[0].width, frames[0].height)
+
 
 class Player(arcade.Sprite):
     def __init__(self, tilemap, collisionList, fountainList):
@@ -45,6 +47,7 @@ class Player(arcade.Sprite):
             frames[0],
             center_x=spawnX,
             center_y=spawnY,
+            pixelated=True,
         )
 
         self.spawnX = spawnX

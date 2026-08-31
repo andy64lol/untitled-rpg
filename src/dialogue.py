@@ -19,6 +19,7 @@ class DialogueBox:
         box = arcade.Sprite(
             arcade.load_texture(str(DIALOGUE_BOX_PATH)),
             scale=BOX_SCALE,
+            pixelated=True,
         )
         box.center_x = width / 2
         box.center_y = BOX_MARGIN + box.height / 2
@@ -81,7 +82,7 @@ class DialogueBox:
         if not self.is_open:
             return
 
-        self.box.draw()
+        self.box.draw(pixelated=True)
         self.message.draw()
 
 

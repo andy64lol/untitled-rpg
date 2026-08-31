@@ -3,6 +3,7 @@ import arcade
 from camera import CameraController
 from config import *
 from dialogue import DialogueBox, OptionBox
+from inventory import COLUMNS, Equipment, Inventory, InventoryScreen
 from load import load_state
 from map import GameMap
 from menu import MainMenu
@@ -58,6 +59,13 @@ class GameWindow(arcade.Window):
         self.options = OptionBox(self.width, self.height)
         self.fountain_cooldown = 0.0
 
+        self.inventory = Inventory()
+        self.equipment = Equipment()
+        self.inventory_screen = InventoryScreen(
+            self.width, self.height, self.inventory, self.equipment
+        )
+        self._seed_inventory()
+
         self.heart_shake_time = 0
         self.heart_shake_strength = 2
         self.spike_damage_cooldown = 1.0
@@ -68,7 +76,7 @@ class GameWindow(arcade.Window):
         heart_count = self.player.maxHp // 10
 
         for index in range(heart_count):
-            heart = arcade.Sprite(self.heart_texture, scale=1)
+            heart = arcade.Sprite(self.heart_texture, scale=1, pixelated=True)
             heart.center_x = 20 + index * heart_size
             heart.center_y = self.height - 20
             heart.width = heart_size
@@ -77,6 +85,7 @@ class GameWindow(arcade.Window):
 
     def start_game(self) -> None:
         self.player.reset()
+        self._seed_inventory()
         self.update_health()
         self.camera.follow(self.player.center_x, self.player.center_y)
         self._enter_game()
@@ -111,6 +120,14 @@ class GameWindow(arcade.Window):
         self.menu.can_resume = True
         self.keys.clear()
 
+    def _seed_inventory(self) -> None:
+        self.inventory.clear()
+        self.equipment.clear()
+        self.inventory.add("apple", 3)
+        self.inventory.add("bronze_sword")
+        self.inventory.add("stainless_steel_shield")
+        self.inventory_screen.inventory_panel.select(0)
+
     def on_draw(self) -> None:
         self.clear()
 
@@ -120,10 +137,11 @@ class GameWindow(arcade.Window):
 
         self.camera.use_world()
         self.game_map.draw()
-        self.player_list.draw()
+        self.player_list.draw(pixelated=True)
 
         self.camera.use_gui()
-        self.heart_list.draw()
+        self.heart_list.draw(pixelated=True)
+        self.inventory_screen.draw()
         self.dialogue.draw()
         self.options.draw()
 
@@ -226,6 +244,36 @@ class GameWindow(arcade.Window):
 
             self.dialogue.close()
 
+    def _run_inventory_action(self, symbol: int) -> None:
+        if symbol in (arcade.key.I, arcade.key.ESCAPE):
+            self.inventory_screen.close()
+            self.keys.clear()
+            return
+
+        if symbol == arcade.key.TAB:
+            self.inventory_screen.switch_focus()
+            return
+
+        if symbol in (arcade.key.ENTER, arcade.key.SPACE):
+            self.inventory_screen.confirm()
+            return
+
+        if self.inventory_screen.focus == "equipment":
+            if symbol == arcade.key.UP:
+                self.inventory_screen.move(-1)
+            elif symbol == arcade.key.DOWN:
+                self.inventory_screen.move(1)
+            return
+
+        if symbol == arcade.key.LEFT:
+            self.inventory_screen.move(-1)
+        elif symbol == arcade.key.RIGHT:
+            self.inventory_screen.move(1)
+        elif symbol == arcade.key.UP:
+            self.inventory_screen.move(-COLUMNS)
+        elif symbol == arcade.key.DOWN:
+            self.inventory_screen.move(COLUMNS)
+
     def _run_menu_action(self, action: str | None) -> None:
         if action == "start":
             self.start_game()
@@ -241,12 +289,21 @@ class GameWindow(arcade.Window):
             self._run_menu_action(self.menu.handle_key(symbol))
             return
 
+        if self.inventory_screen.is_open:
+            self._run_inventory_action(symbol)
+            return
+
         if self.box_is_open:
             self._run_box_action(symbol)
             return
 
         if symbol == arcade.key.ESCAPE:
             self.pause_game()
+            return
+
+        if symbol == arcade.key.I:
+            self.inventory_screen.toggle()
+            self.keys.clear()
             return
 
         self.keys.add(symbol)
@@ -272,6 +329,9 @@ class GameWindow(arcade.Window):
 
     def on_update(self, delta_time: float) -> None:
         if self.currentScreen == "menu":
+            return
+
+        if self.inventory_screen.is_open:
             return
 
         if self.box_is_open:

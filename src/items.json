@@ -1,0 +1,57 @@
+{
+  "apple": {
+    "name": "Apple",
+    "texture": "apple.png",
+    "type": "consumable",
+    "stackable": true,
+    "heal": 10
+  },
+  "bronze_sword": {
+    "name": "Bronze sword",
+    "texture": "bronze_sword.png",
+    "type": "weapon",
+    "slot": "weapon",
+    "stackable": false,
+    "damage" : 1
+  },
+  "iron_sword": {
+    "name": "Iron sword",
+    "texture": "iron_sword.png",
+    "type": "weapon",
+    "slot": "weapon",
+    "stackable": false,
+    "damage": 2
+  },
+  "rusty_iron_sword": {
+    "name": "Rusty iron sword",
+    "texture": "rusty_iron_sword.png",
+    "type": "weapon",
+    "slot": "weapon",
+    "stackable": false,
+    "damage": 1
+  },
+  "titanium_sword": {
+    "name": "Titanium sword",
+    "texture": "titanium_sword.png",
+    "type": "weapon",
+    "slot": "weapon",
+    "stackable": false,
+    "damage": 5
+  },
+  "stainless_steel_shield": {
+    "name": "Steel shield",
+    "texture": "stainless_steel_shield.png",
+    "type": "offhand",
+    "slot": "offhand",
+    "stackable": false,
+    "defense": 5
+  },
+  "leather_armour": {
+    "name": "Leather armour",
+    "texture": "leather_armour.png",
+    "type": "armor",
+    "slot": "armor",
+    "stackable": false,
+    "defense": 2
+  }
+}

@@ -11,19 +11,20 @@ TITLE_ART_HEIGHT = 108
 TITLE_CENTER_OFFSET = 4
 EDGE_MARGIN = 40
 
-BUTTON_SCALE = 2
-BUTTON_ART_WIDTH = 128
-BUTTON_ART_HEIGHT = 64
-BUTTON_MARGIN = 20
-BUTTON_GAP = 16
+BUTTON_SCALE = 1
+BUTTON_ART_WIDTH = 64
+BUTTON_ART_HEIGHT = 32
+BUTTON_MARGIN = 120
+BUTTON_GAP = 32
+BUTTON_OFFSET_Y = 300
 
 SETTINGS_SCALE = 1
 SETTINGS_ART_SIZE = 64
 CORNER_MARGIN = 20
 
-HINT_SIZE = 12
+HINT_SIZE = 10
 CONTROLS_SIZE = 10
-STATUS_SIZE = 12
+STATUS_SIZE = 10
 
 
 class MenuButton(arcade.Sprite):
@@ -42,6 +43,7 @@ class MenuButton(arcade.Sprite):
             scale=scale,
             center_x=center_x,
             center_y=center_y,
+            pixelated=True,
         )
         self.action = action
         self.normal_texture = normal
@@ -63,7 +65,7 @@ class MainMenu:
         self.status = ""
 
         title_texture = arcade.load_texture(str(TITLE_PATH))
-        title_sprite = arcade.Sprite(title_texture, scale=TITLE_SCALE)
+        title_sprite = arcade.Sprite(title_texture, scale=TITLE_SCALE, pixelated=True)
         title_sprite.center_x = (
             width - EDGE_MARGIN - TITLE_ART_WIDTH * TITLE_SCALE / 2
         )
@@ -80,7 +82,7 @@ class MainMenu:
 
     def _create_buttons(self, buttons_dir: Path) -> arcade.SpriteList[MenuButton]:
         center_x = BUTTON_MARGIN + BUTTON_ART_WIDTH * BUTTON_SCALE / 2
-        top = self.height - EDGE_MARGIN
+        top = self.height - EDGE_MARGIN - BUTTON_OFFSET_Y
         step = BUTTON_ART_HEIGHT * BUTTON_SCALE + BUTTON_GAP
 
         column = (("start", "start"), ("load", "load"), ("save", "save"))
@@ -162,8 +164,8 @@ class MainMenu:
             0, self.width, 0, self.height, self.BACKGROUND
         )
 
-        self.title.draw()
-        self.buttons.draw()
+        self.title.draw(pixelated=True)
+        self.buttons.draw(pixelated=True)
 
         title_left = self.width - EDGE_MARGIN - TITLE_ART_WIDTH * TITLE_SCALE
         arcade.draw_text(
@@ -178,8 +180,8 @@ class MainMenu:
             anchor_y="center",
         )
         arcade.draw_text(
-            "WASD  MOVE        H  DAMAGE TEST        ESC  MENU"
-            "        Z  SKIP TEXT",
+            "WASD  MOVE        H  DAMAGE TEST        I  INVENTORY"
+            "        TAB  EQUIPMENT        ESC  MENU        Z  SKIP TEXT",
             title_left,
             70,
             self.MUTED_TEXT,
