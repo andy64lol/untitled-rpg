@@ -72,7 +72,11 @@ class Inventory:
         remaining = count
 
         for stack in self.slots:
-            if stack is None or stack.item_id != item_id:
+            if (
+                stack is None
+                or stack.item_id != item_id
+                or not ITEMS[item_id].stackable
+            ):
                 continue
 
             space = MAX_STACK - stack.count
@@ -93,6 +97,23 @@ class Inventory:
             taken = min(MAX_STACK, remaining)
             self.slots[index] = Stack(item_id, taken)
             remaining -= taken
+
+            if remaining == 0:
+                return True
+
+        return False
+
+    def remove_item(self, item_id: str, count: int = 1) -> bool:
+        remaining = count
+        for index, stack in enumerate(self.slots):
+            if stack is None or stack.item_id != item_id:
+                continue
+
+            removed = min(stack.count, remaining)
+            stack.count -= removed
+            remaining -= removed
+            if stack.count == 0:
+                self.slots[index] = None
 
             if remaining == 0:
                 return True

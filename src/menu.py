@@ -220,7 +220,7 @@ class MainMenu:
             anchor_y="center",
         )
         arcade.draw_text(
-            "WASD MOVE   Z ATTACK   H DAMAGE TEST   I INVENTORY",
+            "WASD MOVE   E INTERACT   Z ATTACK   H DAMAGE TEST",
             title_center_x,
             74,
             self.MUTED_TEXT,
@@ -230,7 +230,7 @@ class MainMenu:
             anchor_y="center",
         )
         arcade.draw_text(
-            "TAB EQUIPMENT   ESC MENU   Z SKIP TEXT",
+            "I INVENTORY   TAB EQUIPMENT   ESC MENU   Z SKIP TEXT",
             title_center_x,
             56,
             self.MUTED_TEXT,

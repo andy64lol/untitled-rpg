@@ -53,5 +53,11 @@
     "slot": "armor",
     "stackable": false,
     "defense": 2
+  },
+  "key": {
+    "name": "Key",
+    "texture": "key.png",
+    "type": "key",
+    "stackable": false
   }
 }

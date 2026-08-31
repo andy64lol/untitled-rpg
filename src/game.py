@@ -4,6 +4,7 @@ from typing import Any
 
 import arcade
 from camera import CameraController
+from chests import ChestManager
 from config import *
 from dialogue import DialogueBox, OptionBox
 from font import FONT_NAME
@@ -59,6 +60,13 @@ class GameWindow(arcade.Window):
     )
     FOUNTAIN_DECLINED = "You chose not to drink."
     FOUNTAIN_WAITING = "Don't drink too much water!"
+    DOOR_PROMPT = "The final door needs a key. Give the key?"
+    DOOR_DECLINED = "You decided not to give the key."
+    DOOR_MISSING_KEY = "You do not have a key."
+    WIN_TITLE = "YOU ESCAPED!"
+    WIN_MESSAGE = "The key turned, and the dungeon door opened."
+    WIN_HINT = "Press ENTER or ESC to return to the menu."
+    INTERACTION_KEYS = (arcade.key.E, arcade.key.ENTER)
 
     STAT_BOX_COLOR = (72, 76, 88)
     STAT_TEXT_COLOR = (235, 232, 213)
@@ -78,6 +86,7 @@ class GameWindow(arcade.Window):
         self.stat_bottom = 0
 
         self.game_map = GameMap(MAPS_DIR / "map1.tmx")
+        self.chests = ChestManager(self.game_map.chests)
         self.camera.set_world_bounds(
             0,
             self.game_map.world_width,
@@ -101,6 +110,8 @@ class GameWindow(arcade.Window):
         self.dialogue = DialogueBox(self.width, self.height)
         self.options = OptionBox(self.width, self.height)
         self.fountain_cooldown = 0.0
+        self.pending_choice = ""
+        self.won = False
 
         self.inventory = Inventory()
         self.equipment = Equipment()
@@ -186,6 +197,9 @@ class GameWindow(arcade.Window):
 
     def start_game(self) -> None:
         self.player.reset()
+        self.chests.reset()
+        self.game_map.lock_door()
+        self.won = False
         self._seed_inventory()
         self.update_health()
         self.update_combat_hud()
@@ -215,13 +229,20 @@ class GameWindow(arcade.Window):
         self._apply_save_state(state)
         self.update_health()
         self.camera.follow(self.player.center_x, self.player.center_y)
-        self._enter_game()
+        if self.won:
+            self.currentScreen = "won"
+            self.menu.can_resume = False
+            self.keys.clear()
+        else:
+            self._enter_game()
 
     def _build_save_state(self) -> dict[str, Any]:
         return {
             "player": self.player.saveState(),
             "inventory": self.inventory.save_state(),
             "equipment": self.equipment.save_state(),
+            "chests": self.chests.save_state(),
+            "door_unlocked": self.won,
         }
 
     def _apply_save_state(self, state: dict[str, Any]) -> None:
@@ -229,23 +250,34 @@ class GameWindow(arcade.Window):
             player_state = state["player"]
             inventory_state = state.get("inventory")
             equipment_state = state.get("equipment")
+            chest_state = state.get("chests")
         else:
             player_state = state
             inventory_state = None
             equipment_state = None
+            chest_state = None
 
         self.player.loadState(player_state)
 
-        if inventory_state is not None:
-            self.inventory.load_state(inventory_state)
-        else:
+        if inventory_state is None:
             self._seed_inventory()
-            return
-
-        if equipment_state is not None:
-            self.equipment.load_state(equipment_state)
         else:
-            self.equipment.clear()
+            self.inventory.load_state(inventory_state)
+            if equipment_state is not None:
+                self.equipment.load_state(equipment_state)
+            else:
+                self.equipment.clear()
+
+        if isinstance(chest_state, dict):
+            self.chests.load_state(chest_state)
+        else:
+            self.chests.reset()
+
+        self.won = bool(state.get("door_unlocked", False))
+        if self.won:
+            self.game_map.unlock_door()
+        else:
+            self.game_map.lock_door()
 
         self.inventory_screen.inventory_panel.select(0)
         self.update_combat_hud()
@@ -308,6 +340,11 @@ class GameWindow(arcade.Window):
             self.menu.draw()
             return
 
+        if self.currentScreen == "won":
+            self.camera.use_gui()
+            self.draw_win_screen()
+            return
+
         self.camera.use_world()
         self.game_map.draw(pixelated=True)
         self.player_list.draw(pixelated=True)
@@ -328,6 +365,7 @@ class GameWindow(arcade.Window):
 
     def open_fountain(self) -> None:
         self.keys.clear()
+        self.pending_choice = "fountain"
 
         if self.fountain_cooldown > 0:
             self.dialogue.show(self.FOUNTAIN_WAITING)
@@ -344,6 +382,80 @@ class GameWindow(arcade.Window):
             return
 
         self.dialogue.show(self.FOUNTAIN_DECLINED)
+
+    def open_door(self) -> None:
+        self.keys.clear()
+        self.pending_choice = "door"
+        self.options.show_options(self.DOOR_PROMPT, ["give", "not give"])
+
+    def interact(self) -> None:
+        if self.player.dead or self.player.moving:
+            return
+
+        chest_index = self.chests.find_in_front(self.player, self.player.facing)
+        if chest_index is not None:
+            self.keys.clear()
+            message = self.chests.interact(chest_index, self.inventory)
+            self.inventory_screen.refresh()
+            self.dialogue.show(message)
+            return
+
+        if self.game_map.door_is_in_front(self.player, self.player.facing):
+            self.open_door()
+
+    def handle_door_choice(self, choice: str) -> None:
+        if choice == "give":
+            if self.inventory.remove_item("key"):
+                self.inventory_screen.refresh()
+                self.game_map.unlock_door()
+                self.won = True
+                self.currentScreen = "won"
+                self.keys.clear()
+                return
+
+            self.dialogue.show(self.DOOR_MISSING_KEY)
+            return
+
+        self.dialogue.show(self.DOOR_DECLINED)
+
+    def draw_win_screen(self) -> None:
+        arcade.draw_lrbt_rectangle_filled(
+            0,
+            self.width,
+            0,
+            self.height,
+            (10, 12, 20),
+        )
+        arcade.draw_text(
+            self.WIN_TITLE,
+            self.width / 2,
+            self.height / 2 + 70,
+            self.STAT_TEXT_COLOR,
+            font_size=32,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+        arcade.draw_text(
+            self.WIN_MESSAGE,
+            self.width / 2,
+            self.height / 2 + 18,
+            self.STAT_TEXT_COLOR,
+            font_size=14,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+        arcade.draw_text(
+            self.WIN_HINT,
+            self.width / 2,
+            self.height / 2 - 32,
+            (142, 151, 164),
+            font_size=11,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
 
     def update_health(self) -> None:
         for index, heart in enumerate(self.heart_list):
@@ -411,7 +523,11 @@ class GameWindow(arcade.Window):
 
                 choice = self.options.confirm()
                 if choice is not None:
-                    self.drink_fountain(choice)
+                    if self.pending_choice == "door":
+                        self.handle_door_choice(choice)
+                    else:
+                        self.drink_fountain(choice)
+                self.pending_choice = ""
                 return
 
         if symbol in (arcade.key.ENTER, arcade.key.SPACE):
@@ -449,6 +565,13 @@ class GameWindow(arcade.Window):
             self._run_menu_action(self.menu.handle_key(symbol))
             return
 
+        if self.currentScreen == "won":
+            if symbol in (arcade.key.ENTER, arcade.key.SPACE, arcade.key.ESCAPE):
+                self.currentScreen = "menu"
+                self.menu.can_resume = False
+                self.menu.status = ""
+            return
+
         if self.inventory_screen.is_open:
             self._run_inventory_action(symbol)
             return
@@ -468,6 +591,10 @@ class GameWindow(arcade.Window):
 
         if symbol == arcade.key.Z:
             self.player_attack()
+            return
+
+        if symbol in self.INTERACTION_KEYS:
+            self.interact()
             return
 
         if symbol in (arcade.key.W, arcade.key.A, arcade.key.S, arcade.key.D):
@@ -496,7 +623,7 @@ class GameWindow(arcade.Window):
             self._run_menu_action(self.menu.handle_click(x, y, button))
 
     def on_update(self, delta_time: float) -> None:
-        if self.currentScreen == "menu":
+        if self.currentScreen in ("menu", "won"):
             return
 
         if self.inventory_screen.is_open:
