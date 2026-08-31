@@ -86,7 +86,11 @@ class GameWindow(arcade.Window):
         self.stat_bottom = 0
 
         self.game_map = GameMap(MAPS_DIR / "map1.tmx")
-        self.chests = ChestManager(self.game_map.chests)
+        self.chests = ChestManager(
+            self.game_map.chests,
+            self.game_map.tilemap.tile_width,
+            self.game_map.tilemap.tile_height,
+        )
         self.camera.set_world_bounds(
             0,
             self.game_map.world_width,
@@ -96,7 +100,7 @@ class GameWindow(arcade.Window):
         self.player = Player(
             self.game_map.tilemap,
             self.game_map.collision,
-            self.game_map.fountains,
+            self.game_map.fountain_colliders,
         )
         self.player_list = arcade.SpriteList()
         self.player_list.append(self.player)
@@ -394,14 +398,17 @@ class GameWindow(arcade.Window):
 
         chest_index = self.chests.find_in_front(self.player, self.player.facing)
         if chest_index is not None:
-            self.keys.clear()
-            message = self.chests.interact(chest_index, self.inventory)
-            self.inventory_screen.refresh()
-            self.dialogue.show(message)
+            self.interact_chest(chest_index)
             return
 
         if self.game_map.door_is_in_front(self.player, self.player.facing):
             self.open_door()
+
+    def interact_chest(self, chest_index: int) -> None:
+        self.keys.clear()
+        message = self.chests.interact(chest_index, self.inventory)
+        self.inventory_screen.refresh()
+        self.dialogue.show(message)
 
     def handle_door_choice(self, choice: str) -> None:
         if choice == "give":
@@ -650,6 +657,18 @@ class GameWindow(arcade.Window):
 
         if bumped_fountain:
             self.open_fountain()
+            return
+
+        chest_index = self.chests.find_in_collision(
+            self.player.lastCollision,
+            self.game_map.chest_colliders,
+        )
+        if chest_index is not None:
+            self.interact_chest(chest_index)
+            return
+
+        if self.game_map.door_is_in_collision(self.player.lastCollision):
+            self.open_door()
             return
 
         self.spike_damage_timer -= delta_time

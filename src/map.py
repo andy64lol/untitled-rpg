@@ -1,8 +1,20 @@
 from pathlib import Path
+from typing import Any
+
 import arcade
 
 
+def snap_to_tile_center(value: float, tile_size: float) -> float:
+    """Return the center of the closest tile for a map object coordinate."""
+    return (
+        round((value - tile_size / 2) / tile_size) * tile_size
+        + tile_size / 2
+    )
+
+
 class GameMap:
+    OBJECT_LAYER_NAME = "objects"
+    OBJECT_COLLISION_SIZE = 32
 
     def __init__(self, map_path: Path):
         self.path = map_path
@@ -12,18 +24,52 @@ class GameMap:
         self.world_height = self.tilemap.height * self.tilemap.tile_height
 
         self.spikes = self.scene["spikes"]
-        self.fountains = self.scene["fountain"]
         self.collision = self.scene["collision"]
-        self.chests = self.scene["chest"]
-        self.door = self.scene["door"]
-        self.door.visible = True
+        map_objects = self.tilemap.object_lists.get(self.OBJECT_LAYER_NAME, [])
 
-        for fountain in self.fountains:
-            self.collision.append(fountain)
-        for chest in self.chests:
-            self.collision.append(chest)
-        for door in self.door:
-            self.collision.append(door)
+        self.fountains = self._objects_named(map_objects, "fountain")
+        self.chests = self._objects_starting_with(map_objects, "chest")
+        self.door = self._objects_named(map_objects, "door")
+
+        self.fountain_colliders = self._make_colliders(self.fountains)
+        self.chest_colliders = self._make_colliders(self.chests)
+        self.door_colliders = self._make_colliders(self.door)
+
+        self.collision.extend(self.fountain_colliders)
+        self.collision.extend(self.chest_colliders)
+        self.collision.extend(self.door_colliders)
+
+    @staticmethod
+    def _objects_named(objects: list[Any], name: str) -> list[Any]:
+        return [obj for obj in objects if obj.name == name]
+
+    @staticmethod
+    def _objects_starting_with(objects: list[Any], prefix: str) -> list[Any]:
+        return sorted(
+            (obj for obj in objects if obj.name.startswith(prefix)),
+            key=lambda obj: obj.name,
+        )
+
+    def object_position(self, map_object: Any) -> tuple[float, float]:
+        shape = map_object.shape
+        return (
+            snap_to_tile_center(float(shape[0]), self.tilemap.tile_width),
+            snap_to_tile_center(float(shape[1]), self.tilemap.tile_height),
+        )
+
+    def _make_colliders(self, objects: list[Any]) -> arcade.SpriteList[arcade.Sprite]:
+        colliders = arcade.SpriteList()
+        for map_object in objects:
+            center_x, center_y = self.object_position(map_object)
+            collider = arcade.SpriteSolidColor(
+                self.OBJECT_COLLISION_SIZE,
+                self.OBJECT_COLLISION_SIZE,
+                (0, 0, 0, 0),
+            )
+            collider.center_x = center_x
+            collider.center_y = center_y
+            colliders.append(collider)
+        return colliders
 
     def draw(self, pixelated: bool = False) -> None:
         self.scene.draw(pixelated=pixelated)
@@ -44,22 +90,23 @@ class GameMap:
 
         return any(
             (
-                (door.center_x - target_x) ** 2
-                + (door.center_y - target_y) ** 2
+                (self.object_position(door)[0] - target_x) ** 2
+                + (self.object_position(door)[1] - target_y) ** 2
             )
             ** 0.5
             <= 40
             for door in self.door
         )
 
+    def door_is_in_collision(self, collision: list[arcade.Sprite]) -> bool:
+        return any(door in collision for door in self.door_colliders)
+
     def unlock_door(self) -> None:
-        self.door.visible = False
-        for door in list(self.door):
+        for door in list(self.door_colliders):
             if door in self.collision:
                 self.collision.remove(door)
 
     def lock_door(self) -> None:
-        self.door.visible = True
-        for door in self.door:
+        for door in self.door_colliders:
             if door not in self.collision:
                 self.collision.append(door)

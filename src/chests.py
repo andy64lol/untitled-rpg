@@ -5,6 +5,7 @@ import arcade
 
 from inventory import Inventory
 from items import ITEMS
+from map import snap_to_tile_center
 
 CHEST_REWARD_IDS = (
     "apple",
@@ -17,13 +18,20 @@ INTERACTION_DISTANCE = 40
 
 
 class ChestManager:
-    def __init__(self, chest_layer: arcade.SpriteList[arcade.Sprite]):
-        self.chest_layer = chest_layer
+    def __init__(
+        self,
+        chest_objects: list[Any],
+        tile_width: float = 32,
+        tile_height: float = 32,
+    ):
+        self.chest_objects = chest_objects
+        self.tile_width = tile_width
+        self.tile_height = tile_height
         self.opened: set[int] = set()
 
     @property
     def unopened_count(self) -> int:
-        return len(self.chest_layer) - len(self.opened)
+        return len(self.chest_objects) - len(self.opened)
 
     def reset(self) -> None:
         self.opened.clear()
@@ -40,16 +48,34 @@ class ChestManager:
 
         closest_index: int | None = None
         closest_distance = float("inf")
-        for index, chest in enumerate(self.chest_layer):
+        for index, chest in enumerate(self.chest_objects):
+            chest_x, chest_y = self._object_position(chest)
             distance = (
-                (chest.center_x - target_x) ** 2
-                + (chest.center_y - target_y) ** 2
+                (chest_x - target_x) ** 2
+                + (chest_y - target_y) ** 2
             ) ** 0.5
             if distance <= INTERACTION_DISTANCE and distance < closest_distance:
                 closest_index = index
                 closest_distance = distance
 
         return closest_index
+
+    def _object_position(self, chest: Any) -> tuple[float, float]:
+        chest_x, chest_y = chest.shape
+        return (
+            snap_to_tile_center(float(chest_x), self.tile_width),
+            snap_to_tile_center(float(chest_y), self.tile_height),
+        )
+
+    def find_in_collision(
+        self,
+        collision: list[arcade.Sprite],
+        chest_colliders: arcade.SpriteList[arcade.Sprite],
+    ) -> int | None:
+        for index, collider in enumerate(chest_colliders):
+            if collider in collision:
+                return index
+        return None
 
     def interact(self, index: int, inventory: Inventory) -> str:
         if index in self.opened:
@@ -75,5 +101,5 @@ class ChestManager:
         self.opened = {
             int(index)
             for index in opened
-            if isinstance(index, int) and 0 <= index < len(self.chest_layer)
+            if isinstance(index, int) and 0 <= index < len(self.chest_objects)
         }

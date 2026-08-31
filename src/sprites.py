@@ -76,6 +76,7 @@ class Player(arcade.Sprite):
         self.targetX = spawnX
         self.targetY = spawnY
         self.moving = False
+        self.lastCollision: list[arcade.Sprite] = []
         self.debug = True
         self.debugInterval = 0.25
         self.debugTimer = 0
@@ -184,6 +185,8 @@ class Player(arcade.Sprite):
         return collision
 
     def updatePlayer(self, keys, delta_time) -> bool:
+        self.lastCollision = []
+
         if self.moving and self.debug:
             self.debugTimer += delta_time
 
@@ -245,6 +248,8 @@ class Player(arcade.Sprite):
         collision = self.checkCollision(targetX, targetY)
 
         if collision:
+            self.lastCollision = collision
+
             if self.bumpedFountain(collision):
                 return True
 
