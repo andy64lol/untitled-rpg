@@ -15,6 +15,8 @@ def snap_to_tile_center(value: float, tile_size: float) -> float:
 class GameMap:
     OBJECT_LAYER_NAME = "objects"
     OBJECT_COLLISION_SIZE = 32
+    SPAWN_OBJECT_NAME = "playerSpawn"
+    FAKE_CHEST_PREFIX = "fakeChest"
 
     def __init__(self, map_path: Path):
         self.path = map_path
@@ -23,21 +25,40 @@ class GameMap:
         self.world_width = self.tilemap.width * self.tilemap.tile_width
         self.world_height = self.tilemap.height * self.tilemap.tile_height
 
-        self.spikes = self.scene["spikes"]
-        self.collision = self.scene["collision"]
+        self.spikes = self._layer("spikes")
+        self.collision = self._layer("collision")
         map_objects = self.tilemap.object_lists.get(self.OBJECT_LAYER_NAME, [])
 
         self.fountains = self._objects_named(map_objects, "fountain")
         self.chests = self._objects_starting_with(map_objects, "chest")
+        self.fake_chests = self._objects_starting_with(
+            map_objects, self.FAKE_CHEST_PREFIX
+        )
         self.door = self._objects_named(map_objects, "door")
+        self.spawn = self._spawn_position(map_objects)
 
         self.fountain_colliders = self._make_colliders(self.fountains)
         self.chest_colliders = self._make_colliders(self.chests)
+        self.fake_chest_colliders = self._make_colliders(self.fake_chests)
         self.door_colliders = self._make_colliders(self.door)
 
         self.collision.extend(self.fountain_colliders)
         self.collision.extend(self.chest_colliders)
+        self.collision.extend(self.fake_chest_colliders)
         self.collision.extend(self.door_colliders)
+
+    def _layer(self, name: str) -> arcade.SpriteList[arcade.Sprite]:
+        try:
+            return self.scene[name]
+        except KeyError:
+            return arcade.SpriteList()
+
+    def _spawn_position(self, objects: list[Any]) -> tuple[float, float]:
+        spawns = self._objects_named(objects, self.SPAWN_OBJECT_NAME)
+        if spawns:
+            return self.object_position(spawns[0])
+
+        return self.world_width / 2, self.world_height / 2
 
     @staticmethod
     def _objects_named(objects: list[Any], name: str) -> list[Any]:
@@ -64,7 +85,7 @@ class GameMap:
             collider = arcade.SpriteSolidColor(
                 self.OBJECT_COLLISION_SIZE,
                 self.OBJECT_COLLISION_SIZE,
-                (0, 0, 0, 0),
+                color=(0, 0, 0, 0),
             )
             collider.center_x = center_x
             collider.center_y = center_y

@@ -52,6 +52,8 @@ class GameWindow(arcade.Window):
     WIDTH = 1280
     HEIGHT = 720
 
+    MAP_FILES = ("map1.tmx", "map2.tmx")
+
     FOUNTAIN_HEAL = 20
     FOUNTAIN_COOLDOWN = 60.0
     FOUNTAIN_PROMPT = "A regenerating fountain, drink from here?"
@@ -60,9 +62,11 @@ class GameWindow(arcade.Window):
     )
     FOUNTAIN_DECLINED = "You chose not to drink."
     FOUNTAIN_WAITING = "Don't drink too much water!"
-    DOOR_PROMPT = "The final door needs a key. Give the key?"
+    DOOR_PROMPT = "The door is locked. Give the key?"
+    FINAL_DOOR_PROMPT = "The final door needs a key. Give the key?"
     DOOR_DECLINED = "You decided not to give the key."
     DOOR_MISSING_KEY = "You do not have a key."
+    NEXT_MAP_MESSAGE = "The door opens. You go deeper into the dungeon."
     WIN_TITLE = "YOU ESCAPED!"
     WIN_MESSAGE = "The key turned, and the dungeon door opened."
     WIN_HINT = "Press ENTER or ESC to return to the menu."
@@ -85,9 +89,11 @@ class GameWindow(arcade.Window):
         self.stat_top = 0
         self.stat_bottom = 0
 
-        self.game_map = GameMap(MAPS_DIR / "map1.tmx")
+        self.map_index = 0
+        self.game_map = GameMap(MAPS_DIR / self.MAP_FILES[self.map_index])
         self.chests = ChestManager(
             self.game_map.chests,
+            self.game_map.fake_chests,
             self.game_map.tilemap.tile_width,
             self.game_map.tilemap.tile_height,
         )
@@ -199,16 +205,57 @@ class GameWindow(arcade.Window):
         self.def_value.x = self.def_box_left + 34
         self.def_value.y = center_y
 
+    @property
+    def map_name(self) -> str:
+        return self.MAP_FILES[self.map_index]
+
+    @property
+    def is_last_map(self) -> bool:
+        return self.map_index >= len(self.MAP_FILES) - 1
+
+    @classmethod
+    def map_index_of(cls, map_name: Any) -> int:
+        if isinstance(map_name, str) and map_name in cls.MAP_FILES:
+            return cls.MAP_FILES.index(map_name)
+
+        return 0
+
+    def load_map(self, index: int) -> None:
+        self.map_index = max(0, min(index, len(self.MAP_FILES) - 1))
+        self.game_map = GameMap(MAPS_DIR / self.map_name)
+        self.chests = ChestManager(
+            self.game_map.chests,
+            self.game_map.fake_chests,
+            self.game_map.tilemap.tile_width,
+            self.game_map.tilemap.tile_height,
+        )
+        self.camera.set_world_bounds(
+            0,
+            self.game_map.world_width,
+            0,
+            self.game_map.world_height,
+        )
+        self.player.set_map(
+            self.game_map.collision,
+            self.game_map.fountain_colliders,
+            self.game_map.spawn[0],
+            self.game_map.spawn[1],
+        )
+        self.fountain_cooldown = 0.0
+        self.camera.follow(self.player.center_x, self.player.center_y)
+
     def start_game(self) -> None:
+        self.load_map(0)
         self.player.reset()
-        self.chests.reset()
-        self.game_map.lock_door()
         self.won = False
         self._seed_inventory()
         self.update_health()
         self.update_combat_hud()
-        self.camera.follow(self.player.center_x, self.player.center_y)
         self._enter_game()
+
+    def enter_next_map(self) -> None:
+        self.load_map(self.map_index + 1)
+        self.dialogue.show(self.NEXT_MAP_MESSAGE)
 
     def resume_game(self) -> None:
         self._enter_game()
@@ -242,6 +289,7 @@ class GameWindow(arcade.Window):
 
     def _build_save_state(self) -> dict[str, Any]:
         return {
+            "map": self.map_name,
             "player": self.player.saveState(),
             "inventory": self.inventory.save_state(),
             "equipment": self.equipment.save_state(),
@@ -261,6 +309,8 @@ class GameWindow(arcade.Window):
             equipment_state = None
             chest_state = None
 
+        self.won = bool(state.get("door_unlocked", False))
+        self.load_map(self.map_index_of(state.get("map")))
         self.player.loadState(player_state)
 
         if inventory_state is None:
@@ -277,7 +327,6 @@ class GameWindow(arcade.Window):
         else:
             self.chests.reset()
 
-        self.won = bool(state.get("door_unlocked", False))
         if self.won:
             self.game_map.unlock_door()
         else:
@@ -390,7 +439,8 @@ class GameWindow(arcade.Window):
     def open_door(self) -> None:
         self.keys.clear()
         self.pending_choice = "door"
-        self.options.show_options(self.DOOR_PROMPT, ["give", "not give"])
+        prompt = self.FINAL_DOOR_PROMPT if self.is_last_map else self.DOOR_PROMPT
+        self.options.show_options(prompt, ["give", "not give"])
 
     def interact(self) -> None:
         if self.player.dead or self.player.moving:
@@ -399,6 +449,13 @@ class GameWindow(arcade.Window):
         chest_index = self.chests.find_in_front(self.player, self.player.facing)
         if chest_index is not None:
             self.interact_chest(chest_index)
+            return
+
+        fake_index = self.chests.find_fake_in_front(
+            self.player, self.player.facing
+        )
+        if fake_index is not None:
+            self.interact_fake_chest(fake_index)
             return
 
         if self.game_map.door_is_in_front(self.player, self.player.facing):
@@ -410,20 +467,29 @@ class GameWindow(arcade.Window):
         self.inventory_screen.refresh()
         self.dialogue.show(message)
 
-    def handle_door_choice(self, choice: str) -> None:
-        if choice == "give":
-            if self.inventory.remove_item("key"):
-                self.inventory_screen.refresh()
-                self.game_map.unlock_door()
-                self.won = True
-                self.currentScreen = "won"
-                self.keys.clear()
-                return
+    def interact_fake_chest(self, fake_index: int) -> None:
+        self.keys.clear()
+        self.dialogue.show(self.chests.interact_fake(fake_index))
 
+    def handle_door_choice(self, choice: str) -> None:
+        if choice != "give":
+            self.dialogue.show(self.DOOR_DECLINED)
+            return
+
+        if not self.inventory.remove_item("key"):
             self.dialogue.show(self.DOOR_MISSING_KEY)
             return
 
-        self.dialogue.show(self.DOOR_DECLINED)
+        self.inventory_screen.refresh()
+        self.game_map.unlock_door()
+        self.keys.clear()
+
+        if self.is_last_map:
+            self.won = True
+            self.currentScreen = "won"
+            return
+
+        self.enter_next_map()
 
     def draw_win_screen(self) -> None:
         arcade.draw_lrbt_rectangle_filled(
@@ -665,6 +731,14 @@ class GameWindow(arcade.Window):
         )
         if chest_index is not None:
             self.interact_chest(chest_index)
+            return
+
+        fake_index = self.chests.find_fake_in_collision(
+            self.player.lastCollision,
+            self.game_map.fake_chest_colliders,
+        )
+        if fake_index is not None:
+            self.interact_fake_chest(fake_index)
             return
 
         if self.game_map.door_is_in_collision(self.player.lastCollision):

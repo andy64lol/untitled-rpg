@@ -93,6 +93,13 @@ class Player(arcade.Sprite):
             else:
                 self.texture = frames[2]
 
+    def set_map(self, collisionList, fountainList, spawnX, spawnY):
+        self.collisionList = collisionList
+        self.fountainList = fountainList
+        self.spawnX = spawnX
+        self.spawnY = spawnY
+        self._placeAt(spawnX, spawnY)
+
     def reset(self):
         self.hp = self.maxHp
         self.dead = False
