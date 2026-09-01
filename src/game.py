@@ -53,7 +53,7 @@ class GameWindow(arcade.Window):
     WIDTH = 1280
     HEIGHT = 720
 
-    MAP_FILES = ("map1.tmx", "map2.tmx", "map3.tmx")
+    MAP_FILES = ("map1.tmx", "map2.tmx", "map3.tmx", "map4.tmx")
     TRANSITION_DURATION = 1.0
 
     FOUNTAIN_HEAL = 20
@@ -165,7 +165,7 @@ class GameWindow(arcade.Window):
     def _create_health_hud(self) -> None:
         heart_count = self.player.maxHp // 10
 
-        for index in range(heart_count):
+        for i in range(heart_count):
             heart = arcade.Sprite(self.heart_texture, scale=1, pixelated=True)
             heart.width = self.HEART_SIZE
             heart.height = self.HEART_SIZE
