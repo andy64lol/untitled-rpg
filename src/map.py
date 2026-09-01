@@ -17,6 +17,9 @@ class GameMap:
     OBJECT_COLLISION_SIZE = 32
     SPAWN_OBJECT_NAME = "playerSpawn"
     FAKE_CHEST_PREFIX = "fakeChest"
+    ENEMY_SPAWN_PREFIX = "spawnEnemy"
+    ENEMY_PROPERTY = "enemy"
+    DEFAULT_ENEMY_ID = "bat"
 
     def __init__(self, map_path: Path):
         self.path = map_path
@@ -36,6 +39,9 @@ class GameMap:
         )
         self.door = self._objects_named(map_objects, "door")
         self.spawn = self._spawn_position(map_objects)
+        self.enemy_spawns = self._enemy_spawn_points(
+            self._objects_starting_with(map_objects, self.ENEMY_SPAWN_PREFIX)
+        )
 
         self.fountain_colliders = self._make_colliders(self.fountains)
         self.chest_colliders = self._make_colliders(self.chests)
@@ -59,6 +65,20 @@ class GameMap:
             return self.object_position(spawns[0])
 
         return self.world_width / 2, self.world_height / 2
+
+    def _enemy_spawn_points(
+        self,
+        objects: list[Any],
+    ) -> list[tuple[float, float, str]]:
+        spawn_points = []
+        for map_object in objects:
+            x, y = self.object_position(map_object)
+            enemy_id = map_object.properties.get(
+                self.ENEMY_PROPERTY, self.DEFAULT_ENEMY_ID
+            )
+            spawn_points.append((x, y, enemy_id))
+
+        return spawn_points
 
     @staticmethod
     def _objects_named(objects: list[Any], name: str) -> list[Any]:
