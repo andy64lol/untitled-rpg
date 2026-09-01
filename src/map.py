@@ -73,7 +73,8 @@ class GameMap:
         spawn_points = []
         for map_object in objects:
             x, y = self.object_position(map_object)
-            enemy_id = map_object.properties.get(
+            properties = map_object.properties or {}
+            enemy_id = properties.get(
                 self.ENEMY_PROPERTY, self.DEFAULT_ENEMY_ID
             )
             spawn_points.append((x, y, enemy_id))

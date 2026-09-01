@@ -76,6 +76,7 @@ class Player(arcade.Sprite):
         self.targetX = spawnX
         self.targetY = spawnY
         self.moving = False
+        self.just_finished_move = False
         self.lastCollision: list[arcade.Sprite] = []
         self.debug = True
         self.debugInterval = 0.25
@@ -145,6 +146,7 @@ class Player(arcade.Sprite):
         self.targetX = x
         self.targetY = y
         self.moving = False
+        self.just_finished_move = False
         self.updateTexture()
 
     def takeDamage(self, damage, defense: int = 0):
@@ -192,6 +194,7 @@ class Player(arcade.Sprite):
         return collision
 
     def updatePlayer(self, keys, delta_time) -> bool:
+        self.just_finished_move = False
         self.lastCollision = []
 
         if self.moving and self.debug:
@@ -222,6 +225,7 @@ class Player(arcade.Sprite):
                 self.center_x = self.targetX
                 self.center_y = self.targetY
                 self.moving = False
+                self.just_finished_move = True
             else:
                 self.center_x += distanceX / distance * moveDistance
                 self.center_y += distanceY / distance * moveDistance

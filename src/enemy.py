@@ -7,6 +7,7 @@ import arcade
 from map import snap_to_tile_center
 from paths import ENEMIES_DIR, ENEMY_JSON_PATH
 
+
 @dataclass(frozen=True)
 class EnemyType:
     id: str
@@ -123,6 +124,47 @@ class EnemyManager:
             return
 
         self.enemies.append(Enemy(kind, center_x, center_y))
+
+    def spawn_near_player(self, player: arcade.Sprite) -> bool:
+        """Spawn the default bat on the closest available nearby tile."""
+        kind = ENEMIES.get("bat")
+        if kind is None:
+            return False
+
+        tile_offsets = (
+            (-2, 0),
+            (2, 0),
+            (0, -2),
+            (0, 2),
+            (-1, 0),
+            (1, 0),
+            (0, -1),
+            (0, 1),
+        )
+        for offset_x, offset_y in tile_offsets:
+            center_x = player.center_x + offset_x * self.tile_width
+            center_y = player.center_y + offset_y * self.tile_height
+            enemy = Enemy(kind, center_x, center_y)
+            if self._is_blocked(enemy, center_x, center_y):
+                continue
+            if arcade.check_for_collision(enemy, player):
+                continue
+
+            self.enemies.append(enemy)
+            return True
+
+        return False
+
+    def attack_at(self, center_x: float, center_y: float) -> bool:
+        """Remove the first enemy in the player's attack tile."""
+        for enemy in list(self.enemies):
+            if (
+                abs(enemy.center_x - center_x) <= self.tile_width
+                and abs(enemy.center_y - center_y) <= self.tile_height
+            ):
+                self.enemies.remove(enemy)
+                return True
+        return False
 
     def update(self, delta_time: float) -> None:
         for enemy in self.enemies:

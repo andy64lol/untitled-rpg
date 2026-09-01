@@ -7,6 +7,7 @@ from camera import CameraController
 from chests import ChestManager
 from config import *
 from dialogue import DialogueBox, OptionBox
+from enemy import EnemyManager
 from font import FONT_NAME
 from inventory import ConfirmResult, Equipment, Inventory, InventoryScreen
 from items import get_combat_stats
@@ -52,7 +53,8 @@ class GameWindow(arcade.Window):
     WIDTH = 1280
     HEIGHT = 720
 
-    MAP_FILES = ("map1.tmx", "map2.tmx")
+    MAP_FILES = ("map1.tmx", "map2.tmx", "map3.tmx")
+    TRANSITION_DURATION = 1.0
 
     FOUNTAIN_HEAL = 20
     FOUNTAIN_COOLDOWN = 60.0
@@ -97,6 +99,12 @@ class GameWindow(arcade.Window):
             self.game_map.tilemap.tile_width,
             self.game_map.tilemap.tile_height,
         )
+        self.enemies = EnemyManager(
+            self.game_map.collision,
+            self.game_map.enemy_spawns,
+            self.game_map.tilemap.tile_width,
+            self.game_map.tilemap.tile_height,
+        )
         self.camera.set_world_bounds(
             0,
             self.game_map.world_width,
@@ -122,6 +130,9 @@ class GameWindow(arcade.Window):
         self.fountain_cooldown = 0.0
         self.pending_choice = ""
         self.won = False
+        self.transition_phase = ""
+        self.transition_elapsed = 0.0
+        self.transition_target_map: int | None = None
 
         self.inventory = Inventory()
         self.equipment = Equipment()
@@ -135,6 +146,8 @@ class GameWindow(arcade.Window):
         self.heart_shake_strength = 2
         self.spike_damage_cooldown = 1.0
         self.spike_damage_timer = 0
+        self.enemy_damage_cooldown = 0.75
+        self.enemy_damage_timer = 0.0
 
     def on_resize(self, width: int, height: int) -> None:
         super().on_resize(width, height)
@@ -229,6 +242,12 @@ class GameWindow(arcade.Window):
             self.game_map.tilemap.tile_width,
             self.game_map.tilemap.tile_height,
         )
+        self.enemies = EnemyManager(
+            self.game_map.collision,
+            self.game_map.enemy_spawns,
+            self.game_map.tilemap.tile_width,
+            self.game_map.tilemap.tile_height,
+        )
         self.camera.set_world_bounds(
             0,
             self.game_map.world_width,
@@ -242,6 +261,7 @@ class GameWindow(arcade.Window):
             self.game_map.spawn[1],
         )
         self.fountain_cooldown = 0.0
+        self.enemy_damage_timer = 0.0
         self.camera.follow(self.player.center_x, self.player.center_y)
 
     def start_game(self) -> None:
@@ -256,6 +276,55 @@ class GameWindow(arcade.Window):
     def enter_next_map(self) -> None:
         self.load_map(self.map_index + 1)
         self.dialogue.show(self.NEXT_MAP_MESSAGE)
+
+    @property
+    def transition_active(self) -> bool:
+        return bool(self.transition_phase)
+
+    def begin_map_transition(self) -> None:
+        if self.is_last_map or self.transition_active:
+            return
+
+        self.transition_phase = "out"
+        self.transition_elapsed = 0.0
+        self.transition_target_map = self.map_index + 1
+        self.keys.clear()
+
+    def update_transition(self, delta_time: float) -> None:
+        self.transition_elapsed += delta_time
+        if self.transition_elapsed < self.TRANSITION_DURATION:
+            return
+
+        if self.transition_phase == "out":
+            target_map = self.transition_target_map
+            if target_map is not None:
+                self.load_map(target_map)
+                self.dialogue.show(self.NEXT_MAP_MESSAGE)
+            self.transition_phase = "in"
+            self.transition_elapsed = 0.0
+            self.transition_target_map = None
+            return
+
+        self.transition_phase = ""
+        self.transition_elapsed = 0.0
+
+    def draw_transition(self) -> None:
+        if not self.transition_active:
+            return
+
+        progress = min(
+            self.transition_elapsed / self.TRANSITION_DURATION,
+            1.0,
+        )
+        alpha = progress if self.transition_phase == "out" else 1.0 - progress
+        self.camera.use_gui()
+        arcade.draw_lrbt_rectangle_filled(
+            0,
+            self.width,
+            0,
+            self.height,
+            (0, 0, 0, int(alpha * 255)),
+        )
 
     def resume_game(self) -> None:
         self._enter_game()
@@ -294,6 +363,7 @@ class GameWindow(arcade.Window):
             "inventory": self.inventory.save_state(),
             "equipment": self.equipment.save_state(),
             "chests": self.chests.save_state(),
+            "enemies": self.enemies.save_state(),
             "door_unlocked": self.won,
         }
 
@@ -303,11 +373,13 @@ class GameWindow(arcade.Window):
             inventory_state = state.get("inventory")
             equipment_state = state.get("equipment")
             chest_state = state.get("chests")
+            enemy_state = state.get("enemies")
         else:
             player_state = state
             inventory_state = None
             equipment_state = None
             chest_state = None
+            enemy_state = None
 
         self.won = bool(state.get("door_unlocked", False))
         self.load_map(self.map_index_of(state.get("map")))
@@ -326,6 +398,11 @@ class GameWindow(arcade.Window):
             self.chests.load_state(chest_state)
         else:
             self.chests.reset()
+
+        if isinstance(enemy_state, dict):
+            self.enemies.load_state(enemy_state)
+        else:
+            self.enemies.reset()
 
         if self.won:
             self.game_map.unlock_door()
@@ -384,6 +461,7 @@ class GameWindow(arcade.Window):
 
         attack_x, attack_y = self.player.get_attack_position()
         self.attack_effects.append(AttackEffect(attack_x, attack_y))
+        self.enemies.attack_at(attack_x, attack_y)
 
     def on_draw(self) -> None:
         self.clear()
@@ -400,6 +478,7 @@ class GameWindow(arcade.Window):
 
         self.camera.use_world()
         self.game_map.draw(pixelated=True)
+        self.enemies.draw(pixelated=True)
         self.player_list.draw(pixelated=True)
 
         for effect in self.attack_effects:
@@ -411,6 +490,7 @@ class GameWindow(arcade.Window):
         self.inventory_screen.draw()
         self.dialogue.draw()
         self.options.draw()
+        self.draw_transition()
 
     @property
     def box_is_open(self) -> bool:
@@ -489,7 +569,7 @@ class GameWindow(arcade.Window):
             self.currentScreen = "won"
             return
 
-        self.enter_next_map()
+        self.begin_map_transition()
 
     def draw_win_screen(self) -> None:
         arcade.draw_lrbt_rectangle_filled(
@@ -645,6 +725,9 @@ class GameWindow(arcade.Window):
                 self.menu.status = ""
             return
 
+        if self.transition_active:
+            return
+
         if self.inventory_screen.is_open:
             self._run_inventory_action(symbol)
             return
@@ -666,6 +749,10 @@ class GameWindow(arcade.Window):
             self.player_attack()
             return
 
+        if symbol == arcade.key.H:
+            self.enemies.spawn_near_player(self.player)
+            return
+
         if symbol in self.INTERACTION_KEYS:
             self.interact()
             return
@@ -674,11 +761,6 @@ class GameWindow(arcade.Window):
             self.player.set_facing_from_key(symbol)
 
         self.keys.add(symbol)
-        if symbol == arcade.key.H:
-            _, defense = get_combat_stats(self.equipment)
-            self.player.takeDamage(10, defense)
-            self.update_health()
-
     def on_key_release(self, symbol, modifiers) -> None:
         if symbol == arcade.key.Z:
             self.dialogue.fast = False
@@ -697,6 +779,10 @@ class GameWindow(arcade.Window):
 
     def on_update(self, delta_time: float) -> None:
         if self.currentScreen in ("menu", "won"):
+            return
+
+        if self.transition_active:
+            self.update_transition(delta_time)
             return
 
         if self.inventory_screen.is_open:
@@ -718,8 +804,13 @@ class GameWindow(arcade.Window):
                 0.0, self.fountain_cooldown - delta_time
             )
 
+        self.enemies.update(delta_time)
         bumped_fountain = self.player.updatePlayer(self.keys, delta_time)
         self.camera.follow(self.player.center_x, self.player.center_y)
+        self.enemies.update_triggers(self.player)
+
+        if self.player.just_finished_move:
+            self.enemies.step(self.player)
 
         if bumped_fountain:
             self.open_fountain()
@@ -744,6 +835,20 @@ class GameWindow(arcade.Window):
         if self.game_map.door_is_in_collision(self.player.lastCollision):
             self.open_door()
             return
+
+        enemy_damage = self.enemies.contact_damage(self.player)
+        if enemy_damage and self.enemy_damage_timer <= 0:
+            _, defense = get_combat_stats(self.equipment)
+            self.player.takeDamage(enemy_damage, defense)
+            self.enemy_damage_timer = self.enemy_damage_cooldown
+            self.update_health()
+        elif not enemy_damage:
+            self.enemy_damage_timer = 0.0
+        else:
+            self.enemy_damage_timer = max(
+                0.0,
+                self.enemy_damage_timer - delta_time,
+            )
 
         self.spike_damage_timer -= delta_time
 
