@@ -12,7 +12,7 @@ python3 src/main.py
 
 ## Goal
 
-Open the chests on map1, take the key they hide, and give it to the door to go down to map2. do the same on map2 and the final door opens for the ending.
+Open the chests on map1, take the key they hide, and give it to the door to go down to map2. do the same on map2 and repeat
 
 ## Features
 
