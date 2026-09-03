@@ -74,15 +74,18 @@ TRANSITION_DURATION = 1.0
 
 # Fountain, switch, and door messages
 FOUNTAIN_HEAL = 20
-FOUNTAIN_COOLDOWN = 60.0
+FOUNTAIN_COOLDOWN = 5.0
 FOUNTAIN_PROMPT = "A regenerating fountain, drink from here?"
 FOUNTAIN_DRUNK = (
     "You drank from the fountain and got refreshed! (2 hearts healed)"
 )
 FOUNTAIN_DECLINED = "You chose not to drink."
 FOUNTAIN_WAITING = "Don't drink too much water!"
+SWITCH_OFF_PROMPT = "The switch is currently off, flip it?"
+SWITCH_ON_PROMPT = "The switch is currently on, flip it?"
 SWITCH_ON_MESSAGE = "The switch is now on."
 SWITCH_OFF_MESSAGE = "The switch is now off."
+PRESSURE_PLATE_PROMPT = "Step on the pressure plate?"
 DOOR_PROMPT = "The door is locked. Give the key?"
 FINAL_DOOR_PROMPT = "The final door needs a key. Give the key?"
 DOOR_DECLINED = "You decided not to give the key."

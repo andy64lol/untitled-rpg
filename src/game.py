@@ -504,13 +504,29 @@ class GameWindow(arcade.Window):
 
     def interact_switch(self, index: int) -> None:
         self.keys.clear()
+        self.pending_choice = f"switch:{index}"
+        prompt = SWITCH_ON_PROMPT if self.game_map.switch_states[index] else SWITCH_OFF_PROMPT
+        self.options.show_options(prompt, ["yes", "no"])
+
+    def interact_pressure_plate(self, index: int) -> None:
+        self.keys.clear()
+        if self.game_map.pressure_plate_states[index]:
+            return
+
+        self.pending_choice = f"pressure_plate:{index}"
+        self.options.show_options(PRESSURE_PLATE_PROMPT, ["yes", "no"])
+
+    def handle_switch_choice(self, index: int, choice: str) -> None:
+        if choice != "yes":
+            return
+
         state = self.game_map.toggle_switch(index)
         message = SWITCH_ON_MESSAGE if state else SWITCH_OFF_MESSAGE
         self.dialogue.show(message)
 
-    def interact_pressure_plate(self, index: int) -> None:
-        self.keys.clear()
-        self.game_map.activate_pressure_plate(index)
+    def handle_pressure_plate_choice(self, index: int, choice: str) -> None:
+        if choice == "yes":
+            self.game_map.activate_pressure_plate(index)
 
     def interact(self) -> None:
         if self.player.dead or self.player.moving:
@@ -682,6 +698,16 @@ class GameWindow(arcade.Window):
                 if choice is not None:
                     if self.pending_choice == "door":
                         self.handle_door_choice(choice)
+                    elif self.pending_choice.startswith("switch:"):
+                        self.handle_switch_choice(
+                            int(self.pending_choice.split(":", 1)[1]),
+                            choice,
+                        )
+                    elif self.pending_choice.startswith("pressure_plate:"):
+                        self.handle_pressure_plate_choice(
+                            int(self.pending_choice.split(":", 1)[1]),
+                            choice,
+                        )
                     else:
                         self.drink_fountain(choice)
                 self.pending_choice = ""
