@@ -1,40 +1,24 @@
-from pathlib import Path
 from typing import Any
 import arcade
 
+from config import *
 
-playerPath = Path(__file__).resolve().parent / "assets" / "sprites" / "player.png"
-
-spriteSheet = arcade.load_spritesheet(playerPath)
+spriteSheet = arcade.load_spritesheet(PLAYER_SPRITE_PATH)
 
 frames = spriteSheet.get_texture_grid(
-    size=(32, 32),
+    size=(PLAYER_GRID_SIZE, PLAYER_GRID_SIZE),
     columns=8,
     count=32,
 )
 
-FACING_OFFSETS = {
-    "up": (0, 1),
-    "down": (0, -1),
-    "left": (-1, 0),
-    "right": (1, 0),
-}
-
-KEY_TO_FACING = {
-    arcade.key.W: "up",
-    arcade.key.S: "down",
-    arcade.key.A: "left",
-    arcade.key.D: "right",
-}
-
 
 class Player(arcade.Sprite):
     def __init__(self, tilemap, collisionList, fountainList):
-        self.gridSize = 32
-        self.gridOffset = 16
+        self.gridSize = PLAYER_GRID_SIZE
+        self.gridOffset = PLAYER_GRID_OFFSET
 
-        spawnX = 400
-        spawnY = 300
+        spawnX = PLAYER_SPAWN_X
+        spawnY = PLAYER_SPAWN_Y
 
         for objectList in tilemap.object_lists.values():
             for obj in objectList:
@@ -65,8 +49,8 @@ class Player(arcade.Sprite):
         self.spawnX = spawnX
         self.spawnY = spawnY
 
-        self.speed = 160
-        self.maxHp = 100
+        self.speed = PLAYER_SPEED
+        self.maxHp = PLAYER_MAX_HP
         self.hp = self.maxHp
         self.collisionList = collisionList
         self.fountainList = fountainList
@@ -78,8 +62,8 @@ class Player(arcade.Sprite):
         self.moving = False
         self.just_finished_move = False
         self.lastCollision: list[arcade.Sprite] = []
-        self.debug = True
-        self.debugInterval = 0.25
+        self.debug = PLAYER_DEBUG
+        self.debugInterval = PLAYER_DEBUG_INTERVAL
         self.debugTimer = 0
 
     def updateTexture(self):

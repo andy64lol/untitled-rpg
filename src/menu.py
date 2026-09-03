@@ -2,29 +2,8 @@ from pathlib import Path
 
 import arcade
 
-from font import FONT_NAME
-from paths import TITLE_PATH
-
-TITLE_SCALE = 2
-TITLE_ART_WIDTH = 240
-TITLE_ART_HEIGHT = 108
-TITLE_CENTER_OFFSET = 4
-EDGE_MARGIN = 40
-
-BUTTON_SCALE = 1
-BUTTON_ART_WIDTH = 64
-BUTTON_ART_HEIGHT = 32
-BUTTON_MARGIN = 120
-BUTTON_GAP = 32
-BUTTON_OFFSET_Y = 300
-
-SETTINGS_SCALE = 1
-SETTINGS_ART_SIZE = 64
-CORNER_MARGIN = 20
-
-HINT_SIZE = 10
-CONTROLS_SIZE = 10
-STATUS_SIZE = 10
+from config import *
+import font
 
 
 class MenuButton(arcade.Sprite):
@@ -51,10 +30,6 @@ class MenuButton(arcade.Sprite):
 
 
 class MainMenu:
-
-    BACKGROUND = (10, 12, 20)
-    MUTED_TEXT = (142, 151, 164)
-
     def __init__(self, width: int, height: int, assets_dir: Path):
         self.width = width
         self.height = height
@@ -200,7 +175,7 @@ class MainMenu:
 
     def draw(self) -> None:
         arcade.draw_lrbt_rectangle_filled(
-            0, self.width, 0, self.height, self.BACKGROUND
+            0, self.width, 0, self.height, MENU_BACKGROUND
         )
 
         self.title.draw(pixelated=True)
@@ -213,7 +188,7 @@ class MainMenu:
             else "ENTER or SPACE to start",
             title_center_x,
             110,
-            self.MUTED_TEXT,
+            MENU_MUTED_TEXT,
             font_size=HINT_SIZE,
             font_name=FONT_NAME,
             anchor_x="center",
@@ -223,7 +198,7 @@ class MainMenu:
             "WASD MOVE   E INTERACT   Z ATTACK   H DAMAGE TEST",
             title_center_x,
             74,
-            self.MUTED_TEXT,
+            MENU_MUTED_TEXT,
             font_size=CONTROLS_SIZE,
             font_name=FONT_NAME,
             anchor_x="center",
@@ -233,7 +208,7 @@ class MainMenu:
             "I INVENTORY   TAB EQUIPMENT   ESC MENU   Z SKIP TEXT",
             title_center_x,
             56,
-            self.MUTED_TEXT,
+            MENU_MUTED_TEXT,
             font_size=CONTROLS_SIZE,
             font_name=FONT_NAME,
             anchor_x="center",
@@ -245,7 +220,7 @@ class MainMenu:
                 self.status,
                 BUTTON_MARGIN,
                 160,
-                self.MUTED_TEXT,
+                MENU_MUTED_TEXT,
                 font_size=STATUS_SIZE,
                 font_name=FONT_NAME,
                 anchor_x="left",

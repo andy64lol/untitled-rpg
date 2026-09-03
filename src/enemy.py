@@ -4,8 +4,8 @@ from typing import Any
 
 import arcade
 
+from config import *
 from map import snap_to_tile_center
-from paths import ENEMIES_DIR, ENEMY_JSON_PATH
 
 
 @dataclass(frozen=True)

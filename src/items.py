@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import arcade
 
-from paths import ITEMS_DIR, ITEMS_JSON_PATH
+from config import *
 
 
 @dataclass(frozen=True)
@@ -17,10 +17,6 @@ class Item:
     damage: int = 0
     defense: int = 0
     heal: int = 0
-
-
-BASE_ATTACK = 1
-BASE_DEFENSE = 1
 
 
 def get_combat_stats(equipment) -> tuple[int, int]:

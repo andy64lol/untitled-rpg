@@ -1,42 +1,32 @@
 import arcade
 
-from font import FONT_NAME
-from paths import DIALOGUE_BOX_PATH
-
-BOX_SCALE = 2
-BOX_MARGIN = 40
-TEXT_MARGIN = 40
-TEXT_SIZE = 18
-TEXT_SPEED = 45
-FAST_SPEED_MULTIPLIER = 6
+from config import *
+import font
 
 
 class DialogueBox:
-
-    TEXT_COLOR = (235, 232, 213)
-
     def __init__(self, width: int, height: int):
         box = arcade.Sprite(
             arcade.load_texture(str(DIALOGUE_BOX_PATH)),
-            scale=BOX_SCALE,
+            scale=DIALOGUE_BOX_SCALE,
             pixelated=True,
         )
         box.center_x = width / 2
-        box.center_y = BOX_MARGIN + box.height / 2
+        box.center_y = DIALOGUE_BOX_MARGIN + box.height / 2
         self.box = arcade.SpriteList()
         self.box.append(box)
 
         self.left = box.left
         self.top = box.top
         self.bottom = box.bottom
-        self.text_width = int(box.width) - TEXT_MARGIN * 2
+        self.text_width = int(box.width) - DIALOGUE_TEXT_MARGIN * 2
 
         self.message = arcade.Text(
             "",
-            self.left + TEXT_MARGIN,
-            self.top - TEXT_MARGIN,
-            self.TEXT_COLOR,
-            font_size=TEXT_SIZE,
+            self.left + DIALOGUE_TEXT_MARGIN,
+            self.top - DIALOGUE_TEXT_MARGIN,
+            DIALOGUE_TEXT_COLOR,
+            font_size=DIALOGUE_TEXT_SIZE,
             font_name=FONT_NAME,
             width=self.text_width,
             anchor_x="left",
@@ -62,9 +52,9 @@ class DialogueBox:
         if not self.is_open or self.is_complete:
             return
 
-        speed = TEXT_SPEED
+        speed = DIALOGUE_TEXT_SPEED
         if self.fast:
-            speed *= FAST_SPEED_MULTIPLIER
+            speed *= DIALOGUE_FAST_SPEED_MULTIPLIER
 
         self.revealed = min(
             len(self.full_text), self.revealed + speed * delta_time
@@ -81,15 +71,15 @@ class DialogueBox:
     def resize(self, width: int, height: int) -> None:
         box = self.box[0]
         box.center_x = width / 2
-        box.center_y = BOX_MARGIN + box.height / 2
+        box.center_y = DIALOGUE_BOX_MARGIN + box.height / 2
 
         self.left = box.left
         self.top = box.top
         self.bottom = box.bottom
-        self.text_width = int(box.width) - TEXT_MARGIN * 2
+        self.text_width = int(box.width) - DIALOGUE_TEXT_MARGIN * 2
 
-        self.message.x = self.left + TEXT_MARGIN
-        self.message.y = self.top - TEXT_MARGIN
+        self.message.x = self.left + DIALOGUE_TEXT_MARGIN
+        self.message.y = self.top - DIALOGUE_TEXT_MARGIN
         self.message.width = self.text_width
 
     def draw(self) -> None:
@@ -109,10 +99,10 @@ class OptionBox(DialogueBox):
 
         self.option_line = arcade.Text(
             "",
-            self.left + TEXT_MARGIN,
-            self.bottom + TEXT_MARGIN,
-            self.TEXT_COLOR,
-            font_size=TEXT_SIZE,
+            self.left + DIALOGUE_TEXT_MARGIN,
+            self.bottom + DIALOGUE_TEXT_MARGIN,
+            DIALOGUE_TEXT_COLOR,
+            font_size=DIALOGUE_TEXT_SIZE,
             font_name=FONT_NAME,
             width=self.text_width,
             anchor_x="left",
@@ -122,8 +112,8 @@ class OptionBox(DialogueBox):
 
     def resize(self, width: int, height: int) -> None:
         super().resize(width, height)
-        self.option_line.x = self.left + TEXT_MARGIN
-        self.option_line.y = self.bottom + TEXT_MARGIN
+        self.option_line.x = self.left + DIALOGUE_TEXT_MARGIN
+        self.option_line.y = self.bottom + DIALOGUE_TEXT_MARGIN
         self.option_line.width = self.text_width
 
     def show_options(self, message: str, options: list[str]) -> None:

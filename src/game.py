@@ -8,19 +8,11 @@ from chests import ChestManager
 from config import *
 from dialogue import DialogueBox, OptionBox
 from enemy import EnemyManager
-from font import FONT_NAME
 from inventory import ConfirmResult, Equipment, Inventory, InventoryScreen
 from items import get_combat_stats
 from load import load_state
 from map import GameMap
 from menu import MainMenu
-from paths import (
-    ASSETS_DIR,
-    BROKEN_HEART_PATH,
-    HEART_PATH,
-    MAPS_DIR,
-    SAVE_PATH,
-)
 import save
 from sprites import Player
 
@@ -29,8 +21,8 @@ from sprites import Player
 class AttackEffect:
     center_x: float
     center_y: float
-    timer: float = 0.15
-    size: float = 32
+    timer: float = ATTACK_EFFECT_DURATION
+    size: float = ATTACK_EFFECT_SIZE
 
     def update(self, delta_time: float) -> bool:
         self.timer -= delta_time
@@ -38,7 +30,10 @@ class AttackEffect:
 
     def draw(self) -> None:
         half = self.size / 2
-        alpha = max(0, min(255, int(255 * (self.timer / 0.15))))
+        alpha = max(
+            0,
+            min(255, int(255 * (self.timer / ATTACK_EFFECT_DURATION))),
+        )
         arcade.draw_lrbt_rectangle_filled(
             self.center_x - half,
             self.center_x + half,
@@ -49,40 +44,12 @@ class AttackEffect:
 
 
 class GameWindow(arcade.Window):
-
-    WIDTH = 1280
-    HEIGHT = 720
-
-    MAP_FILES = ("map1.tmx", "map2.tmx", "map3.tmx", "map4.tmx")
-    TRANSITION_DURATION = 1.0
-
-    FOUNTAIN_HEAL = 20
-    FOUNTAIN_COOLDOWN = 60.0
-    FOUNTAIN_PROMPT = "A regenerating fountain, drink from here?"
-    FOUNTAIN_DRUNK = (
-        "You drank from the fountain and got refreshed! (2 hearts healed)"
-    )
-    FOUNTAIN_DECLINED = "You chose not to drink."
-    FOUNTAIN_WAITING = "Don't drink too much water!"
-    DOOR_PROMPT = "The door is locked. Give the key?"
-    FINAL_DOOR_PROMPT = "The final door needs a key. Give the key?"
-    DOOR_DECLINED = "You decided not to give the key."
-    DOOR_MISSING_KEY = "You do not have a key."
-    NEXT_MAP_MESSAGE = "The door opens. You go deeper into the dungeon."
-    WIN_TITLE = "YOU ESCAPED!"
-    WIN_MESSAGE = "The key turned, and the dungeon door opened."
-    WIN_HINT = "Press ENTER or ESC to return to the menu."
-    INTERACTION_KEYS = (arcade.key.E, arcade.key.ENTER)
-
-    STAT_BOX_COLOR = (72, 76, 88)
-    STAT_TEXT_COLOR = (235, 232, 213)
-    HEART_SIZE = 30
-    HEART_GAP = 2
-
     def __init__(self):
-        super().__init__(self.WIDTH, self.HEIGHT, "Untitled RPG", resizable=True)
-        self.set_minimum_size(960, 540)
-        arcade.set_background_color((10, 12, 20, 255))
+        super().__init__(
+            WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, resizable=True
+        )
+        self.set_minimum_size(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        arcade.set_background_color(WINDOW_BACKGROUND)
 
         self.camera = CameraController(self.width, self.height)
         self.menu = MainMenu(self.width, self.height, ASSETS_DIR)
@@ -92,7 +59,7 @@ class GameWindow(arcade.Window):
         self.stat_bottom = 0
 
         self.map_index = 0
-        self.game_map = GameMap(MAPS_DIR / self.MAP_FILES[self.map_index])
+        self.game_map = GameMap(MAPS_DIR / MAP_FILES[self.map_index])
         self.chests = ChestManager(
             self.game_map.chests,
             self.game_map.fake_chests,
@@ -163,12 +130,14 @@ class GameWindow(arcade.Window):
             self.camera.follow(self.player.center_x, self.player.center_y)
 
     def _create_health_hud(self) -> None:
-        heart_count = self.player.maxHp // 10
+        heart_count = self.player.maxHp // HEALTH_PER_HEART
 
         for i in range(heart_count):
-            heart = arcade.Sprite(self.heart_texture, scale=1, pixelated=True)
-            heart.width = self.HEART_SIZE
-            heart.height = self.HEART_SIZE
+            heart = arcade.Sprite(
+                self.heart_texture, scale=HEART_SCALE, pixelated=True
+            )
+            heart.width = HEART_SIZE
+            heart.height = HEART_SIZE
             self.heart_list.append(heart)
 
         self._layout_health_hud(self.height)
@@ -177,21 +146,21 @@ class GameWindow(arcade.Window):
         hud_height = height if height is not None else self.height
         for index, heart in enumerate(self.heart_list):
             heart.center_x = self._heart_x(index)
-            heart.center_y = hud_height - 20
+            heart.center_y = hud_height - HUD_TOP_OFFSET
 
     def _heart_x(self, index: int) -> float:
-        return 20 + index * (self.HEART_SIZE + self.HEART_GAP)
+        return HUD_LEFT + index * (HEART_SIZE + HEART_GAP)
 
     def _create_combat_hud(self) -> None:
-        self.atk_box_left = 20
-        self.def_box_left = 78
+        self.atk_box_left = ATTACK_BOX_LEFT
+        self.def_box_left = DEFENSE_BOX_LEFT
 
         self.atk_value = arcade.Text(
             "1",
             0,
             0,
-            self.STAT_TEXT_COLOR,
-            font_size=12,
+            STAT_TEXT_COLOR,
+            font_size=STAT_VALUE_FONT_SIZE,
             font_name=FONT_NAME,
             anchor_x="center",
             anchor_y="center",
@@ -200,8 +169,8 @@ class GameWindow(arcade.Window):
             "1",
             0,
             0,
-            self.STAT_TEXT_COLOR,
-            font_size=12,
+            STAT_TEXT_COLOR,
+            font_size=STAT_VALUE_FONT_SIZE,
             font_name=FONT_NAME,
             anchor_x="center",
             anchor_y="center",
@@ -209,32 +178,32 @@ class GameWindow(arcade.Window):
         self._layout_combat_hud()
 
     def _layout_combat_hud(self) -> None:
-        self.stat_top = self.height - 34
-        self.stat_bottom = self.height - 58
+        self.stat_top = self.height - STAT_TOP_OFFSET
+        self.stat_bottom = self.height - STAT_BOTTOM_OFFSET
         center_y = (self.stat_top + self.stat_bottom) / 2
 
-        self.atk_value.x = self.atk_box_left + 34
+        self.atk_value.x = self.atk_box_left + STAT_VALUE_OFFSET
         self.atk_value.y = center_y
-        self.def_value.x = self.def_box_left + 34
+        self.def_value.x = self.def_box_left + STAT_VALUE_OFFSET
         self.def_value.y = center_y
 
     @property
     def map_name(self) -> str:
-        return self.MAP_FILES[self.map_index]
+        return MAP_FILES[self.map_index]
 
     @property
     def is_last_map(self) -> bool:
-        return self.map_index >= len(self.MAP_FILES) - 1
+        return self.map_index >= len(MAP_FILES) - 1
 
     @classmethod
     def map_index_of(cls, map_name: Any) -> int:
-        if isinstance(map_name, str) and map_name in cls.MAP_FILES:
-            return cls.MAP_FILES.index(map_name)
+        if isinstance(map_name, str) and map_name in MAP_FILES:
+            return MAP_FILES.index(map_name)
 
         return 0
 
     def load_map(self, index: int) -> None:
-        self.map_index = max(0, min(index, len(self.MAP_FILES) - 1))
+        self.map_index = max(0, min(index, len(MAP_FILES) - 1))
         self.game_map = GameMap(MAPS_DIR / self.map_name)
         self.chests = ChestManager(
             self.game_map.chests,
@@ -275,7 +244,7 @@ class GameWindow(arcade.Window):
 
     def enter_next_map(self) -> None:
         self.load_map(self.map_index + 1)
-        self.dialogue.show(self.NEXT_MAP_MESSAGE)
+        self.dialogue.show(NEXT_MAP_MESSAGE)
 
     @property
     def transition_active(self) -> bool:
@@ -292,14 +261,14 @@ class GameWindow(arcade.Window):
 
     def update_transition(self, delta_time: float) -> None:
         self.transition_elapsed += delta_time
-        if self.transition_elapsed < self.TRANSITION_DURATION:
+        if self.transition_elapsed < TRANSITION_DURATION:
             return
 
         if self.transition_phase == "out":
             target_map = self.transition_target_map
             if target_map is not None:
                 self.load_map(target_map)
-                self.dialogue.show(self.NEXT_MAP_MESSAGE)
+                self.dialogue.show(NEXT_MAP_MESSAGE)
             self.transition_phase = "in"
             self.transition_elapsed = 0.0
             self.transition_target_map = None
@@ -313,7 +282,7 @@ class GameWindow(arcade.Window):
             return
 
         progress = min(
-            self.transition_elapsed / self.TRANSITION_DURATION,
+            self.transition_elapsed / TRANSITION_DURATION,
             1.0,
         )
         alpha = progress if self.transition_phase == "out" else 1.0 - progress
@@ -364,6 +333,7 @@ class GameWindow(arcade.Window):
             "equipment": self.equipment.save_state(),
             "chests": self.chests.save_state(),
             "enemies": self.enemies.save_state(),
+            "map_objects": self.game_map.save_state(),
             "door_unlocked": self.won,
         }
 
@@ -374,15 +344,18 @@ class GameWindow(arcade.Window):
             equipment_state = state.get("equipment")
             chest_state = state.get("chests")
             enemy_state = state.get("enemies")
+            map_object_state = state.get("map_objects")
         else:
             player_state = state
             inventory_state = None
             equipment_state = None
             chest_state = None
             enemy_state = None
+            map_object_state = None
 
         self.won = bool(state.get("door_unlocked", False))
         self.load_map(self.map_index_of(state.get("map")))
+        self.game_map.load_state(map_object_state)
         self.player.loadState(player_state)
 
         if inventory_state is None:
@@ -436,17 +409,17 @@ class GameWindow(arcade.Window):
         for label, box_left in (("ATK", self.atk_box_left), ("DEF", self.def_box_left)):
             arcade.draw_lrbt_rectangle_filled(
                 box_left,
-                box_left + 52,
+                box_left + STAT_BOX_SIZE,
                 self.stat_bottom,
                 self.stat_top,
-                self.STAT_BOX_COLOR,
+                STAT_BOX_COLOR,
             )
             arcade.draw_text(
                 label,
-                box_left + 6,
+                box_left + STAT_LABEL_OFFSET,
                 (self.stat_top + self.stat_bottom) / 2,
-                self.STAT_TEXT_COLOR,
-                font_size=10,
+                STAT_TEXT_COLOR,
+                font_size=STAT_FONT_SIZE,
                 font_name=FONT_NAME,
                 anchor_x="left",
                 anchor_y="center",
@@ -501,26 +474,36 @@ class GameWindow(arcade.Window):
         self.pending_choice = "fountain"
 
         if self.fountain_cooldown > 0:
-            self.dialogue.show(self.FOUNTAIN_WAITING)
+            self.dialogue.show(FOUNTAIN_WAITING)
             return
 
-        self.options.show_options(self.FOUNTAIN_PROMPT, ["yes", "no"])
+        self.options.show_options(FOUNTAIN_PROMPT, ["yes", "no"])
 
     def drink_fountain(self, choice: str) -> None:
         if choice == "yes":
-            self.player.heal(self.FOUNTAIN_HEAL)
+            self.player.heal(FOUNTAIN_HEAL)
             self.update_health()
-            self.fountain_cooldown = self.FOUNTAIN_COOLDOWN
-            self.dialogue.show(self.FOUNTAIN_DRUNK)
+            self.fountain_cooldown = FOUNTAIN_COOLDOWN
+            self.dialogue.show(FOUNTAIN_DRUNK)
             return
 
-        self.dialogue.show(self.FOUNTAIN_DECLINED)
+        self.dialogue.show(FOUNTAIN_DECLINED)
 
     def open_door(self) -> None:
         self.keys.clear()
         self.pending_choice = "door"
-        prompt = self.FINAL_DOOR_PROMPT if self.is_last_map else self.DOOR_PROMPT
+        prompt = FINAL_DOOR_PROMPT if self.is_last_map else DOOR_PROMPT
         self.options.show_options(prompt, ["give", "not give"])
+
+    def interact_switch(self, index: int) -> None:
+        self.keys.clear()
+        state = self.game_map.toggle_switch(index)
+        message = SWITCH_ON_MESSAGE if state else SWITCH_OFF_MESSAGE
+        self.dialogue.show(message)
+
+    def interact_pressure_plate(self, index: int) -> None:
+        self.keys.clear()
+        self.game_map.activate_pressure_plate(index)
 
     def interact(self) -> None:
         if self.player.dead or self.player.moving:
@@ -538,6 +521,20 @@ class GameWindow(arcade.Window):
             self.interact_fake_chest(fake_index)
             return
 
+        switch_index = self.game_map.switch_index_in_front(
+            self.player, self.player.facing
+        )
+        if switch_index is not None:
+            self.interact_switch(switch_index)
+            return
+
+        pressure_plate_index = self.game_map.pressure_plate_index_in_front(
+            self.player, self.player.facing
+        )
+        if pressure_plate_index is not None:
+            self.interact_pressure_plate(pressure_plate_index)
+            return
+
         if self.game_map.door_is_in_front(self.player, self.player.facing):
             self.open_door()
 
@@ -553,11 +550,11 @@ class GameWindow(arcade.Window):
 
     def handle_door_choice(self, choice: str) -> None:
         if choice != "give":
-            self.dialogue.show(self.DOOR_DECLINED)
+            self.dialogue.show(DOOR_DECLINED)
             return
 
         if not self.inventory.remove_item("key"):
-            self.dialogue.show(self.DOOR_MISSING_KEY)
+            self.dialogue.show(DOOR_MISSING_KEY)
             return
 
         self.inventory_screen.refresh()
@@ -577,34 +574,34 @@ class GameWindow(arcade.Window):
             self.width,
             0,
             self.height,
-            (10, 12, 20),
+            WINDOW_BACKGROUND,
         )
         arcade.draw_text(
-            self.WIN_TITLE,
+            WIN_TITLE,
             self.width / 2,
             self.height / 2 + 70,
-            self.STAT_TEXT_COLOR,
-            font_size=32,
+            STAT_TEXT_COLOR,
+            font_size=WIN_FONT_SIZE,
             font_name=FONT_NAME,
             anchor_x="center",
             anchor_y="center",
         )
         arcade.draw_text(
-            self.WIN_MESSAGE,
+            WIN_MESSAGE,
             self.width / 2,
             self.height / 2 + 18,
-            self.STAT_TEXT_COLOR,
-            font_size=14,
+            STAT_TEXT_COLOR,
+            font_size=WIN_MESSAGE_FONT_SIZE,
             font_name=FONT_NAME,
             anchor_x="center",
             anchor_y="center",
         )
         arcade.draw_text(
-            self.WIN_HINT,
+            WIN_HINT,
             self.width / 2,
             self.height / 2 - 32,
-            (142, 151, 164),
-            font_size=11,
+            MENU_MUTED_TEXT,
+            font_size=WIN_HINT_FONT_SIZE,
             font_name=FONT_NAME,
             anchor_x="center",
             anchor_y="center",
@@ -614,7 +611,7 @@ class GameWindow(arcade.Window):
         for index, heart in enumerate(self.heart_list):
             heart.texture = (
                 self.heart_texture
-                if self.player.hp > index * 10
+                if self.player.hp > index * HEALTH_PER_HEART
                 else self.broken_heart_texture
             )
 
@@ -625,8 +622,8 @@ class GameWindow(arcade.Window):
         )
         alpha = 100 if moving_input else 255
 
-        hearts_left = self.player.hp // 10
-        if self.player.hp > 0 and self.player.hp % 10:
+        hearts_left = self.player.hp // HEALTH_PER_HEART
+        if self.player.hp > 0 and self.player.hp % HEALTH_PER_HEART:
             hearts_left += 1
 
         if hearts_left <= 3:
@@ -638,7 +635,7 @@ class GameWindow(arcade.Window):
                     * self.heart_shake_strength
                 )
                 heart.center_y = (
-                    self.height - 20
+                    self.height - HUD_TOP_OFFSET
                     + math.cos(self.heart_shake_time * 60 + index)
                     * self.heart_shake_strength
                 )
@@ -647,7 +644,7 @@ class GameWindow(arcade.Window):
             self.heart_shake_time = 0
             for index, heart in enumerate(self.heart_list):
                 heart.center_x = self._heart_x(index)
-                heart.center_y = self.height - 20
+                heart.center_y = self.height - HUD_TOP_OFFSET
                 heart.alpha = alpha
 
     def _run_box_action(self, symbol: int) -> None:
@@ -753,7 +750,7 @@ class GameWindow(arcade.Window):
             self.enemies.spawn_near_player(self.player)
             return
 
-        if symbol in self.INTERACTION_KEYS:
+        if symbol in INTERACTION_KEYS:
             self.interact()
             return
 
@@ -814,6 +811,20 @@ class GameWindow(arcade.Window):
 
         if bumped_fountain:
             self.open_fountain()
+            return
+
+        switch_index = self.game_map.switch_index_in_collision(
+            self.player.lastCollision
+        )
+        if switch_index is not None:
+            self.interact_switch(switch_index)
+            return
+
+        pressure_plate_index = self.game_map.pressure_plate_index_in_collision(
+            self.player.lastCollision
+        )
+        if pressure_plate_index is not None:
+            self.interact_pressure_plate(pressure_plate_index)
             return
 
         chest_index = self.chests.find_in_collision(

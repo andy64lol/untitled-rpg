@@ -3,27 +3,10 @@ from typing import Any, Sequence
 
 import arcade
 
+from config import *
 from inventory import Inventory
 from items import ITEMS
 from map import snap_to_tile_center
-
-CHEST_REWARD_IDS = (
-    "apple",
-    "iron_sword",
-    "rusty_iron_sword",
-    "leather_armour",
-    "titanium_sword",
-)
-FAKE_CHEST_MESSAGES = (
-    "It's a fake chest! Nothing inside but your own greed.",
-    "Empty. The chest seems to be laughing at you.",
-    "You fell for it. There is nothing here but dust.",
-    "This chest was never real. Your greed was, though.",
-    "The lid creaks open to reveal... disappointment.",
-)
-FAKE_CHEST_AGAIN = "Still empty. Still greedy."
-INTERACTION_DISTANCE = 40
-
 
 class ChestManager:
     def __init__(

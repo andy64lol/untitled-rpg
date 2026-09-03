@@ -1,7 +1,5 @@
 import arcade
 
-from paths import FONT_PATH
+from config import *
 
 arcade.load_font(str(FONT_PATH))
-
-FONT_NAME = "Pixeloid Mono"

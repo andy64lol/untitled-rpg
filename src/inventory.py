@@ -4,32 +4,9 @@ from typing import Any
 import arcade
 from PIL import ImageFilter
 
-from font import FONT_NAME
+from config import *
+import font
 from items import ITEMS
-from paths import EQUIPMENT_SLOTS_DIR
-
-COLUMNS = 4
-ROWS = 3
-SLOT_SIZE = 48
-SLOT_GAP = 8
-ICON_SCALE = 4
-MAX_STACK = 16
-
-EQUIPMENT_SLOTS = ("weapon", "offhand", "armor")
-EQUIPMENT_SLOT_SIZE = 64
-EQUIPMENT_SLOT_GAP = 8
-
-PANEL_PADDING = 20
-PANEL_GAP = 24
-LABEL_HEIGHT = 18
-
-PANEL_COLOR = (16, 18, 28, 240)
-SLOT_COLOR = (38, 42, 58)
-SLOT_SELECTED_COLOR = (96, 108, 148)
-EQUIPMENT_SLOT_BG = (72, 76, 88)
-TEXT_COLOR = (235, 232, 213)
-LABEL_SIZE = 10
-COUNT_SIZE = 10
 
 
 def _load_slot_textures() -> tuple[dict[str, arcade.Texture], dict[str, arcade.Texture]]:
