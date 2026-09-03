@@ -36,6 +36,7 @@ class Stack:
 class ConfirmResult:
     action: str
     heal: int = 0
+    gold: int = 0
 
 
 class Inventory:
@@ -349,6 +350,7 @@ class InventoryPanel:
         self.left = left
         self.top = top
         self.bottom = self.top - self.panel_height
+        self.gold = 0
 
         self.icons = arcade.SpriteList()
         self.counts: list[arcade.Text] = []
@@ -392,6 +394,16 @@ class InventoryPanel:
             anchor_x="left",
             anchor_y="center",
         )
+        self.gold_label = arcade.Text(
+            "",
+            self.left + self.panel_width - PANEL_PADDING,
+            self.top - PANEL_PADDING / 2,
+            TEXT_COLOR,
+            font_size=LABEL_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="right",
+            anchor_y="center",
+        )
         self.refresh()
 
     @property
@@ -426,6 +438,8 @@ class InventoryPanel:
         self.label.x = self.left + PANEL_PADDING
         self.label.y = self.bottom + LABEL_HEIGHT / 2
         self.label.width = self.panel_width - PANEL_PADDING * 2
+        self.gold_label.x = self.left + self.panel_width - PANEL_PADDING
+        self.gold_label.y = self.top - PANEL_PADDING / 2
 
     def draw(self, focused: bool) -> None:
         arcade.draw_lrbt_rectangle_filled(
@@ -457,6 +471,7 @@ class InventoryPanel:
             count.draw()
 
         self.icons.draw(pixelated=True)
+        self.gold_label.draw()
         self.label.draw()
 
     def _slot_left(self, column: int) -> float:
@@ -466,6 +481,8 @@ class InventoryPanel:
         return self.top - PANEL_PADDING - (row + 1) * SLOT_SIZE - row * SLOT_GAP
 
     def refresh(self) -> None:
+        self.gold_label.text = f"Gold: {self.gold}"
+
         for index, sprite in enumerate(self.icons):
             stack = self.inventory.slots[index]
             sprite.visible = stack is not None
@@ -489,10 +506,23 @@ class InventoryPanel:
         if stack.count > 1:
             name = f"{name} ×{stack.count}"
 
+        action_hint = ""
         if item.item_type == "consumable":
-            self.label.text = f"{name} · Enter"
-        else:
-            self.label.text = name
+            action_hint = "Enter use"
+        elif item.slot is not None:
+            action_hint = "Enter equip"
+
+        if item.removeable:
+            action_hint = f"{action_hint} · " if action_hint else ""
+            action_hint += f"{SELL_KEY_LABEL} sell {item.price}g"
+        elif item.item_type == "key":
+            action_hint = "Cannot sell"
+
+        self.label.text = f"{name} · {action_hint}" if action_hint else name
+
+    def set_gold(self, gold: int) -> None:
+        self.gold = gold
+        self.gold_label.text = f"Gold: {gold}"
 
 
 class InventoryScreen:
@@ -568,6 +598,9 @@ class InventoryScreen:
         self.focus = "equipment" if self.focus == "inventory" else "inventory"
         self.refresh()
 
+    def set_gold(self, gold: int) -> None:
+        self.inventory_panel.set_gold(gold)
+
     def handle_key(self, symbol: int) -> str | ConfirmResult | None:
         if symbol in (arcade.key.I, arcade.key.ESCAPE):
             return "close"
@@ -578,6 +611,9 @@ class InventoryScreen:
 
         if symbol in (arcade.key.ENTER, arcade.key.SPACE):
             return self.confirm()
+
+        if self.focus == "inventory" and symbol == SELL_KEY:
+            return self._sell_selected()
 
         if self.focus == "equipment":
             if symbol in (arcade.key.UP, arcade.key.W):
@@ -677,6 +713,22 @@ class InventoryScreen:
 
         self.refresh()
         return ConfirmResult("consume", heal=item.heal)
+
+    def _sell_selected(self) -> ConfirmResult | None:
+        stack = self.inventory_panel.selected
+        if stack is None:
+            return None
+
+        item = ITEMS[stack.item_id]
+        if not item.removeable:
+            return None
+
+        removed = self.inventory.remove_at(self.inventory_panel.index, 1)
+        if removed is None:
+            return None
+
+        self.refresh()
+        return ConfirmResult("sell", gold=item.price)
 
     def _unequip_selected(self) -> bool:
         slot = self.equipment_panel.selected_slot

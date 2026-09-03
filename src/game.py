@@ -106,6 +106,8 @@ class GameWindow(arcade.Window):
         self.inventory_screen = InventoryScreen(
             self.width, self.height, self.inventory, self.equipment
         )
+        self.gold = STARTING_GOLD
+        self.inventory_screen.set_gold(self.gold)
         self._seed_inventory()
 
         self.attack_effects: list[AttackEffect] = []
@@ -237,6 +239,7 @@ class GameWindow(arcade.Window):
         self.load_map(0)
         self.player.reset()
         self.won = False
+        self.gold = STARTING_GOLD
         self._seed_inventory()
         self.update_health()
         self.update_combat_hud()
@@ -331,6 +334,7 @@ class GameWindow(arcade.Window):
             "player": self.player.saveState(),
             "inventory": self.inventory.save_state(),
             "equipment": self.equipment.save_state(),
+            "gold": self.gold,
             "chests": self.chests.save_state(),
             "enemies": self.enemies.save_state(),
             "map_objects": self.game_map.save_state(),
@@ -354,6 +358,7 @@ class GameWindow(arcade.Window):
             map_object_state = None
 
         self.won = bool(state.get("door_unlocked", False))
+        self.gold = max(0, int(state.get("gold", STARTING_GOLD)))
         self.load_map(self.map_index_of(state.get("map")))
         self.game_map.load_state(map_object_state)
         self.player.loadState(player_state)
@@ -383,6 +388,7 @@ class GameWindow(arcade.Window):
             self.game_map.lock_door()
 
         self.inventory_screen.inventory_panel.select(0)
+        self.inventory_screen.set_gold(self.gold)
         self.update_combat_hud()
         self.inventory_screen.refresh()
 
@@ -398,6 +404,7 @@ class GameWindow(arcade.Window):
         self.inventory.add("bronze_sword")
         self.inventory.add("stainless_steel_shield")
         self.inventory_screen.inventory_panel.select(0)
+        self.inventory_screen.set_gold(self.gold)
         self.update_combat_hud()
 
     def update_combat_hud(self) -> None:
@@ -699,6 +706,9 @@ class GameWindow(arcade.Window):
                 self.update_health()
             elif action.action in ("equip", "unequip"):
                 self.update_combat_hud()
+            elif action.action == "sell":
+                self.gold += action.gold
+                self.inventory_screen.set_gold(self.gold)
 
     def _run_menu_action(self, action: str | None) -> None:
         if action == "start":

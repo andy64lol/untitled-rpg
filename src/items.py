@@ -17,6 +17,8 @@ class Item:
     damage: int = 0
     defense: int = 0
     heal: int = 0
+    price: int = 0
+    removeable: bool = True
 
 
 def get_combat_stats(equipment) -> tuple[int, int]:
@@ -50,6 +52,8 @@ def load_items() -> dict[str, Item]:
             damage=entry.get("damage", 0),
             defense=entry.get("defense", 0),
             heal=entry.get("heal", 0),
+            price=entry.get("price", 0),
+            removeable=entry.get("removeable", item_id != "key"),
         )
 
     return items

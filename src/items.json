@@ -4,7 +4,9 @@
     "texture": "apple.png",
     "type": "consumable",
     "stackable": true,
-    "heal": 10
+    "heal": 10,
+    "price": 5,
+    "removeable": true
   },
   "bronze_sword": {
     "name": "Bronze sword",
@@ -12,7 +14,9 @@
     "type": "weapon",
     "slot": "weapon",
     "stackable": false,
-    "damage" : 1
+    "damage" : 1,
+    "price": 25,
+    "removeable": true
   },
   "iron_sword": {
     "name": "Iron sword",
@@ -20,7 +24,9 @@
     "type": "weapon",
     "slot": "weapon",
     "stackable": false,
-    "damage": 2
+    "damage": 2,
+    "price": 50,
+    "removeable": true
   },
   "rusty_iron_sword": {
     "name": "Rusty iron sword",
@@ -28,7 +34,9 @@
     "type": "weapon",
     "slot": "weapon",
     "stackable": false,
-    "damage": 1
+    "damage": 1,
+    "price": 15,
+    "removeable": true
   },
   "titanium_sword": {
     "name": "Titanium sword",
@@ -36,7 +44,9 @@
     "type": "weapon",
     "slot": "weapon",
     "stackable": false,
-    "damage": 5
+    "damage": 5,
+    "price": 100,
+    "removeable": true
   },
   "stainless_steel_shield": {
     "name": "Steel shield",
@@ -44,7 +54,9 @@
     "type": "offhand",
     "slot": "offhand",
     "stackable": false,
-    "defense": 5
+    "defense": 5,
+    "price": 75,
+    "removeable": true
   },
   "leather_armour": {
     "name": "Leather armour",
@@ -52,12 +64,16 @@
     "type": "armor",
     "slot": "armor",
     "stackable": false,
-    "defense": 2
+    "defense": 2,
+    "price": 35,
+    "removeable": true
   },
   "key": {
     "name": "Key",
     "texture": "key.png",
     "type": "key",
-    "stackable": false
+    "stackable": false,
+    "price": 0,
+    "removeable": false
   }
 }
