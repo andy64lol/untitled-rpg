@@ -45,7 +45,7 @@ class AttackEffect:
 
 
 class GameWindow(arcade.Window):
-    def __init__(self):
+    def __init__(self, start_level: int | None = None, health_infinite: bool = False):
         super().__init__(
             WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, resizable=True
         )
@@ -60,6 +60,10 @@ class GameWindow(arcade.Window):
         self.stat_bottom = 0
 
         self.map_index = 0
+        self.start_map_index = 0
+        if start_level is not None:
+            self.start_map_index = max(0, min(start_level, len(MAP_FILES) - 1))
+            self.map_index = self.start_map_index
         self.game_map = GameMap(MAPS_DIR / MAP_FILES[self.map_index])
         self.chests = ChestManager(
             self.game_map.chests,
@@ -84,6 +88,7 @@ class GameWindow(arcade.Window):
             self.game_map.collision,
             self.game_map.fountain_colliders,
         )
+        self.player.invincible = health_infinite
         self.player_list = arcade.SpriteList()
         self.player_list.append(self.player)
 
@@ -118,6 +123,9 @@ class GameWindow(arcade.Window):
         self.spike_damage_timer = 0
         self.enemy_damage_cooldown = 0.75
         self.enemy_damage_timer = 0.0
+
+        if start_level is not None:
+            self.start_game()
 
     def on_resize(self, width: int, height: int) -> None:
         super().on_resize(width, height)
@@ -237,7 +245,7 @@ class GameWindow(arcade.Window):
         self.camera.follow(self.player.center_x, self.player.center_y)
 
     def start_game(self) -> None:
-        self.load_map(0)
+        self.load_map(self.start_map_index)
         self.player.reset()
         self.won = False
         self.gold = STARTING_GOLD

@@ -58,6 +58,7 @@ class Player(arcade.Sprite):
         self.facing = "right"
         self.direction = "right"
         self.dead = False
+        self.invincible = False
         self.targetX = spawnX
         self.targetY = spawnY
         self.moving = False
@@ -135,7 +136,7 @@ class Player(arcade.Sprite):
         self.updateTexture()
 
     def takeDamage(self, damage, defense: int = 0):
-        if self.dead:
+        if self.dead or self.invincible:
             return
 
         actual_damage = max(0, damage - defense)
