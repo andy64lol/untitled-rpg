@@ -473,7 +473,7 @@ class GameWindow(arcade.Window):
     def _light_emit_positions(self) -> list[tuple[float, float]]:
         tile_width = self.game_map.tilemap.tile_width
         tile_height = self.game_map.tilemap.tile_height
-        solid = self.game_map.solid_tiles
+        solid = self.game_map.light_blockers
         cols = int(self.game_map.tilemap.width)
         rows = int(self.game_map.tilemap.height)
         radius = LIGHT_RADIUS_TILES
@@ -525,7 +525,7 @@ class GameWindow(arcade.Window):
     def _line_of_sight(
         self, x0: float, y0: float, x1: float, y1: float
     ) -> bool:
-        solid = self.game_map.solid_tiles
+        solid = self.game_map.light_blockers
         if not solid:
             return True
 
@@ -616,7 +616,7 @@ class GameWindow(arcade.Window):
         if distance > 1:
             return 0.0
         if delta_col != 0 and delta_row != 0:
-            solid = self.game_map.solid_tiles
+            solid = self.game_map.light_blockers
 
             def blocks(tile: tuple[int, int]) -> bool:
                 return tile in solid and tile not in light_tiles

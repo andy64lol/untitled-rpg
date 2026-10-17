@@ -70,6 +70,18 @@ class GameMap:
         self.collision.extend(self.fake_chest_colliders)
         self.collision.extend(self.door_colliders)
 
+        self.light_blockers = self.solid_tiles - self._object_tiles(
+            self.fountains + self.chests + self.fake_chests
+        )
+
+    def _object_tiles(self, objects: list[Any]) -> set[tuple[int, int]]:
+        tile_width = self.tilemap.tile_width
+        tile_height = self.tilemap.tile_height
+        return {
+            (int(x // tile_width), int(y // tile_height))
+            for x, y in (self.object_position(obj) for obj in objects)
+        }
+
     def _layer(self, name: str) -> arcade.SpriteList[arcade.Sprite]:
         try:
             return self.scene[name]
