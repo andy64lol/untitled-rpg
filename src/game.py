@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import arcade
+
+import save
 from camera import CameraController
 from chests import ChestManager
 from config import *
@@ -13,7 +15,6 @@ from items import get_combat_stats
 from load import load_state
 from map import GameMap
 from menu import MainMenu
-import save
 from sprites import Player
 
 

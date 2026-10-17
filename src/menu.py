@@ -3,7 +3,6 @@ from pathlib import Path
 import arcade
 
 from config import *
-import font
 
 
 class MenuButton(arcade.Sprite):

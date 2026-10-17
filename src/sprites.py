@@ -1,4 +1,5 @@
 from typing import Any
+
 import arcade
 
 from config import *

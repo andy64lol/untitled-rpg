@@ -8,6 +8,24 @@
     "price": 5,
     "removeable": true
   },
+  "pear":{
+    "name": "Pear",
+    "texture": "pear.png",
+    "type": "consumeable",
+    "stackable": true,
+    "heal": 15,
+    "price": 10,
+    "removeable": true
+  },
+  "banana":{
+    "name": "Banana",
+    "texture": "banana.png",
+    "type": "consumeable",
+    "stackable": true,
+    "heal": 20,
+    "price": 15,
+    "removeable": true
+  },
   "bronze_sword": {
     "name": "Bronze sword",
     "texture": "bronze_sword.png",
