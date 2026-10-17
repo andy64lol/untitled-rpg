@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -6,6 +7,7 @@ import arcade
 
 from config import *
 from map import snap_to_tile_center
+from sprites import Player
 
 
 @dataclass(frozen=True)
@@ -97,7 +99,7 @@ class EnemyManager:
     def __init__(
         self,
         collision: arcade.SpriteList[arcade.Sprite],
-        spawn_points: list[tuple[float, float, str]] = (),
+        spawn_points: Sequence[tuple[float, float, str]] = (),
         tile_width: float = 32,
         tile_height: float = 32,
     ):
@@ -125,7 +127,7 @@ class EnemyManager:
 
         self.enemies.append(Enemy(kind, center_x, center_y))
 
-    def spawn_near_player(self, player: arcade.Sprite) -> bool:
+    def spawn_near_player(self, player: Player) -> bool:
         """Spawn the default bat on the closest available nearby tile."""
         kind = ENEMIES.get("bat")
         if kind is None:
@@ -172,7 +174,7 @@ class EnemyManager:
 
         self.enemies.update_animation(delta_time)
 
-    def update_triggers(self, player: arcade.Sprite) -> None:
+    def update_triggers(self, player: Player) -> None:
         """Spawn an enemy on a trigger tile once the player steps off it."""
         for index, (spawn_x, spawn_y, enemy_id) in enumerate(self.spawn_points):
             if index in self.spawned:
@@ -188,7 +190,7 @@ class EnemyManager:
                 self.spawned.add(index)
                 self.spawn(enemy_id, spawn_x, spawn_y)
 
-    def step(self, player: arcade.Sprite) -> None:
+    def step(self, player: Player) -> None:
         """Move every enemy one tile, the player just finished moving."""
         for enemy in self.enemies:
             if enemy.moving:
@@ -201,7 +203,7 @@ class EnemyManager:
                     enemy.step_to(target_x, target_y)
                     break
 
-    def contact_damage(self, player: arcade.Sprite) -> int:
+    def contact_damage(self, player: Player) -> int:
         return max(
             (
                 enemy.kind.damage
@@ -248,7 +250,7 @@ class EnemyManager:
     def _steps_toward(
         self,
         enemy: Enemy,
-        player: arcade.Sprite,
+        player: Player,
     ) -> list[tuple[float, float]]:
         offset_x = player.center_x - enemy.center_x
         offset_y = player.center_y - enemy.center_y

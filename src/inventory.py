@@ -4,8 +4,8 @@ from typing import Any
 import arcade
 from PIL import ImageFilter
 
+import font  # noqa: F401
 from config import *
-import font
 from items import ITEMS
 
 

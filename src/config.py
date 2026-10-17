@@ -2,12 +2,12 @@ from pathlib import Path
 
 import arcade
 
-
 # Project paths
 SRC_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = SRC_DIR / "assets"
 MAPS_DIR = SRC_DIR / "maps"
 SAVE_PATH = SRC_DIR / "saves" / "slot1.urpgs"
+LOGS_DIR = SRC_DIR / "logs"
 ITEMS_DIR = ASSETS_DIR / "items"
 ITEMS_JSON_PATH = SRC_DIR / "items.json"
 ENEMIES_DIR = ASSETS_DIR / "sprites" / "enemy"
@@ -22,6 +22,7 @@ PLAYER_SPRITE_PATH = ASSETS_DIR / "sprites" / "player.png"
 
 # Shared gameplay values
 CAMERA_PLAYER_ZOOM = 3.0
+CAMERA_FREECAM_SPEED = 300
 ATTACK_EFFECT_DURATION = 0.15
 ATTACK_EFFECT_SIZE = 32
 FACING_OFFSETS = {
@@ -61,6 +62,20 @@ DEFAULT_ENEMY_ID = "bat"
 FOUNTAIN_OBJECT_NAME = "fountain"
 SWITCH_PREFIX = "switch"
 PRESSURE_PLATE_PREFIX = "pressurePlate"
+
+# Light sources and shadow rendering
+LIGHT_SOURCE_TILES = (12,)
+LIGHT_OBJECT_PREFIX = "light"
+LIGHT_OBJECT_TYPE = "light"
+LIGHT_RADIUS_TILES = 4
+LIGHT_CORE_FRACTION = 0.5
+LIGHT_BLOCK_TILES = 1
+LIGHT_FALLOFF_STEPS = 5
+PLAYER_VISION_TILES = 2
+DARKNESS_ALPHA = 215
+DARKNESS_COLOR = (0, 0, 0)
+LIGHT_SOURCE_TINT_COLOR = (255, 130, 40)
+LIGHT_SOURCE_TINT_ALPHA = 55
 
 # Window and map progression
 WINDOW_WIDTH = 1280

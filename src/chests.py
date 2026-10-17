@@ -1,5 +1,6 @@
 import random
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import arcade
 
@@ -7,6 +8,7 @@ from config import *
 from inventory import Inventory
 from items import ITEMS
 from map import snap_to_tile_center
+
 
 class ChestManager:
     def __init__(

@@ -1,2 +1,3 @@
 *.pyc
 src/saves/*
+src/logs/*

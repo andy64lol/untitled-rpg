@@ -2,8 +2,13 @@ from pathlib import Path
 from typing import Any
 
 import arcade
+from pytiled_parser.layer import TileLayer
 
 from config import *
+
+GID_FLAG_MASK = 0x0FFFFFFF
+TILES_LAYER_NAME = "tiles"
+COLLISION_LAYER_NAME = "collision"
 
 
 def snap_to_tile_center(value: float, tile_size: float) -> float:
@@ -24,7 +29,9 @@ class GameMap:
 
         self.spikes = self._layer("spikes")
         self.collision = self._layer("collision")
+        self.solid_tiles = self._solid_tiles()
         map_objects = self.tilemap.object_lists.get(OBJECT_LAYER_NAME, [])
+        self.light_sources = self._light_sources(map_objects)
 
         self.fountains = self._objects_named(
             map_objects, FOUNTAIN_OBJECT_NAME
@@ -68,6 +75,82 @@ class GameMap:
             return self.scene[name]
         except KeyError:
             return arcade.SpriteList()
+
+    def _light_sources(
+        self, objects: list[Any]
+    ) -> list[tuple[float, float]]:
+        sources = self._light_source_tiles()
+        sources.extend(
+            self.object_position(map_object)
+            for map_object in objects
+            if self._is_light_object(map_object)
+        )
+        return sources
+
+    @staticmethod
+    def _is_light_object(map_object: Any) -> bool:
+        name = (map_object.name or "").lower()
+        object_type = (map_object.type or "").lower()
+        return name.startswith(LIGHT_OBJECT_PREFIX) or (
+            object_type == LIGHT_OBJECT_TYPE
+        )
+
+    def _light_source_tiles(self) -> list[tuple[float, float]]:
+        layer = next(
+            (
+                layer
+                for layer in self.tilemap.tiled_map.layers
+                if isinstance(layer, TileLayer)
+                and layer.name == TILES_LAYER_NAME
+            ),
+            None,
+        )
+        if layer is None:
+            return []
+        data = layer.data
+        if data is None:
+            return []
+
+        tile_width = self.tilemap.tile_width
+        tile_height = self.tilemap.tile_height
+        height = self.tilemap.height
+        sources = []
+        for row_index, row in enumerate(data):
+            for column_index, gid in enumerate(row):
+                if gid and (gid & GID_FLAG_MASK) in LIGHT_SOURCE_TILES:
+                    sources.append(
+                        (
+                            column_index * tile_width + tile_width / 2,
+                            (height - 1 - row_index) * tile_height
+                            + tile_height / 2,
+                        )
+                    )
+        return sources
+
+    def _solid_tiles(self) -> set[tuple[int, int]]:
+        layer = next(
+            (
+                layer
+                for layer in self.tilemap.tiled_map.layers
+                if isinstance(layer, TileLayer)
+                and layer.name == COLLISION_LAYER_NAME
+            ),
+            None,
+        )
+        if layer is None:
+            return set()
+        data = layer.data
+        if data is None:
+            return set()
+
+        height = int(self.tilemap.height)
+        solid: set[tuple[int, int]] = set()
+        for row_index, row in enumerate(data):
+            arcade_row = height - 1 - row_index
+            for column_index, gid in enumerate(row):
+                if gid and (gid & GID_FLAG_MASK):
+                    solid.add((column_index, arcade_row))
+        return solid
 
     def _spawn_position(self, objects: list[Any]) -> tuple[float, float]:
         spawns = self._objects_named(objects, SPAWN_OBJECT_NAME)

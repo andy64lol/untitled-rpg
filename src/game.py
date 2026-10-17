@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import arcade
+from PIL import Image
 
 import save
 from camera import CameraController
@@ -45,12 +46,23 @@ class AttackEffect:
 
 
 class GameWindow(arcade.Window):
-    def __init__(self, start_level: int | None = None, health_infinite: bool = False):
+    def __init__(
+        self,
+        start_level: int | None = None,
+        health_infinite: bool = False,
+        disable_player_light: bool = False,
+        freecam: bool = False,
+        disable_map_light: bool = False,
+    ):
         super().__init__(
             WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, resizable=True
         )
         self.set_minimum_size(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         arcade.set_background_color(WINDOW_BACKGROUND)
+
+        self.disable_player_light = disable_player_light
+        self.freecam = freecam
+        self.disable_map_light = disable_map_light
 
         self.camera = CameraController(self.width, self.height)
         self.menu = MainMenu(self.width, self.height, ASSETS_DIR)
@@ -65,6 +77,7 @@ class GameWindow(arcade.Window):
             self.start_map_index = max(0, min(start_level, len(MAP_FILES) - 1))
             self.map_index = self.start_map_index
         self.game_map = GameMap(MAPS_DIR / MAP_FILES[self.map_index])
+        self._los_cache: dict[tuple[int, int, int], bool] = {}
         self.chests = ChestManager(
             self.game_map.chests,
             self.game_map.fake_chests,
@@ -137,7 +150,7 @@ class GameWindow(arcade.Window):
         self._layout_health_hud(height)
         self._layout_combat_hud()
 
-        if self.currentScreen == "game":
+        if self.currentScreen == "game" and not self.freecam:
             self.camera.follow(self.player.center_x, self.player.center_y)
 
     def _create_health_hud(self) -> None:
@@ -216,6 +229,7 @@ class GameWindow(arcade.Window):
     def load_map(self, index: int) -> None:
         self.map_index = max(0, min(index, len(MAP_FILES) - 1))
         self.game_map = GameMap(MAPS_DIR / self.map_name)
+        print(f"[map] loaded {self.map_name}")
         self.chests = ChestManager(
             self.game_map.chests,
             self.game_map.fake_chests,
@@ -242,6 +256,7 @@ class GameWindow(arcade.Window):
         )
         self.fountain_cooldown = 0.0
         self.enemy_damage_timer = 0.0
+        self._los_cache.clear()
         self.camera.follow(self.player.center_x, self.player.center_y)
 
     def start_game(self) -> None:
@@ -452,6 +467,484 @@ class GameWindow(arcade.Window):
         self.attack_effects.append(AttackEffect(attack_x, attack_y))
         self.enemies.attack_at(attack_x, attack_y)
 
+    def _map_light_positions(self) -> list[tuple[float, float]]:
+        return list(self.game_map.light_sources)
+
+    def _light_emit_positions(self) -> list[tuple[float, float]]:
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+        solid = self.game_map.solid_tiles
+        cols = int(self.game_map.tilemap.width)
+        rows = int(self.game_map.tilemap.height)
+        radius = LIGHT_RADIUS_TILES
+
+        def is_open(col: int, row: int) -> bool:
+            return 0 <= col < cols and 0 <= row < rows and (col, row) not in solid
+
+        emit: list[tuple[float, float]] = []
+        for x, y in self._map_light_positions():
+            col, row = int(x // tile_width), int(y // tile_height)
+            if (col, row) not in solid:
+                emit.append((x, y))
+                continue
+
+            left = is_open(col - 1, row)
+            right = is_open(col + 1, row)
+            up = is_open(col, row + 1)
+            down = is_open(col, row - 1)
+            if not left and not right and up and down:
+                candidates = ((0, 1), (0, -1))
+            elif not up and not down and left and right:
+                candidates = ((1, 0), (-1, 0))
+            else:
+                emit.append((x, y))
+                continue
+
+            best = (col, row)
+            best_area = -1
+            for offset_col, offset_row in candidates:
+                near_col = col + offset_col
+                near_row = row + offset_row
+                area = sum(
+                    1
+                    for area_col in range(near_col - radius, near_col + radius + 1)
+                    for area_row in range(near_row - radius, near_row + radius + 1)
+                    if is_open(area_col, area_row)
+                )
+                if area > best_area:
+                    best_area = area
+                    best = (near_col, near_row)
+            emit.append(
+                (
+                    best[0] * tile_width + tile_width / 2,
+                    best[1] * tile_height + tile_height / 2,
+                )
+            )
+        return emit
+
+    def _line_of_sight(
+        self, x0: float, y0: float, x1: float, y1: float
+    ) -> bool:
+        solid = self.game_map.solid_tiles
+        if not solid:
+            return True
+
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+
+        start = (int(x0 // tile_width), int(y0 // tile_height))
+        end = (int(x1 // tile_width), int(y1 // tile_height))
+        if start == end:
+            return True
+
+        dx = x1 - x0
+        dy = y1 - y0
+        step_x = 1 if dx > 0 else -1
+        step_y = 1 if dy > 0 else -1
+
+        if dx != 0:
+            next_x = (start[0] + (1 if dx > 0 else 0)) * tile_width
+            t_max_x = (next_x - x0) / dx
+            t_delta_x = tile_width / abs(dx)
+        else:
+            t_max_x = math.inf
+            t_delta_x = math.inf
+        if dy != 0:
+            next_y = (start[1] + (1 if dy > 0 else 0)) * tile_height
+            t_max_y = (next_y - y0) / dy
+            t_delta_y = tile_height / abs(dy)
+        else:
+            t_max_y = math.inf
+            t_delta_y = math.inf
+
+        col, row = start
+        while (col, row) != end:
+            if abs(t_max_x - t_max_y) < 1e-9:
+                next_col = col + step_x
+                next_row = row + step_y
+                if (next_col, row) in solid and (col, next_row) in solid:
+                    return False
+                if (next_col, next_row) == end:
+                    break
+                if (next_col, next_row) in solid:
+                    return False
+                col, row = next_col, next_row
+                t_max_x += t_delta_x
+                t_max_y += t_delta_y
+            elif t_max_x < t_max_y:
+                col += step_x
+                t_max_x += t_delta_x
+            else:
+                row += step_y
+                t_max_y += t_delta_y
+            if (col, row) == end:
+                break
+            if (col, row) in solid:
+                return False
+        return True
+
+    def _light_los(
+        self,
+        index: int,
+        light_x: float,
+        light_y: float,
+        col: int,
+        row: int,
+        cx: float,
+        cy: float,
+    ) -> bool:
+        key = (index, col, row)
+        cached = self._los_cache.get(key)
+        if cached is None:
+            cached = self._line_of_sight(light_x, light_y, cx, cy)
+            self._los_cache[key] = cached
+        return cached
+
+    def _player_vision(
+        self,
+        col: int,
+        row: int,
+        player_col: int,
+        player_row: int,
+        light_tiles: set[tuple[int, int]],
+    ) -> float:
+        delta_col = col - player_col
+        delta_row = row - player_row
+        distance = max(abs(delta_col), abs(delta_row))
+        if distance == 0:
+            return 1.0
+        if distance > 1:
+            return 0.0
+        if delta_col != 0 and delta_row != 0:
+            solid = self.game_map.solid_tiles
+
+            def blocks(tile: tuple[int, int]) -> bool:
+                return tile in solid and tile not in light_tiles
+
+            blocked = blocks(
+                (player_col + delta_col, player_row),
+            ) and blocks(
+                (player_col, player_row + delta_row),
+            )
+            if blocked:
+                return 0.0
+        return 1 - 1 / PLAYER_VISION_TILES
+
+    def _visible_light_indices(
+        self, lights: list[tuple[float, float]]
+    ) -> set[int]:
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+        cols = int(self.game_map.tilemap.width)
+        rows = int(self.game_map.tilemap.height)
+        player_x = self.player.center_x
+        player_y = self.player.center_y
+        visible: set[int] = set()
+        for index, (light_x, light_y) in enumerate(lights):
+            if math.hypot(player_x - light_x, player_y - light_y) > (
+                LIGHT_RADIUS_TILES * tile_width
+            ):
+                continue
+            light_col = int(light_x // tile_width)
+            light_row = int(light_y // tile_height)
+            for dcol in (-1, 0, 1):
+                for drow in (-1, 0, 1):
+                    anchor_col = light_col + dcol
+                    anchor_row = light_row + drow
+                    if not (0 <= anchor_col < cols and 0 <= anchor_row < rows):
+                        continue
+                    if self._line_of_sight(
+                        player_x,
+                        player_y,
+                        anchor_col * tile_width + tile_width / 2,
+                        anchor_row * tile_height + tile_height / 2,
+                    ):
+                        visible.add(index)
+                        break
+                else:
+                    continue
+                break
+        return visible
+
+    def _tile_lit(
+        self,
+        col: int,
+        row: int,
+        can_see: bool,
+        lights: list[tuple[float, float]],
+        visible_lights: set[int],
+        light_source_tiles: set[tuple[int, int]],
+        light_radius: float,
+        light_core: float,
+    ) -> float:
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+        block_center_x = col * tile_width + tile_width / 2
+        block_center_y = row * tile_height + tile_height / 2
+        steps = max(1, LIGHT_FALLOFF_STEPS)
+
+        lit = 0.0
+        if can_see:
+            for index, (light_x, light_y) in enumerate(lights):
+                if index not in visible_lights:
+                    continue
+                distance = math.hypot(
+                    block_center_x - light_x,
+                    block_center_y - light_y,
+                )
+                if distance <= light_core:
+                    falloff = 1.0
+                elif distance < light_radius:
+                    falloff = 1 - (distance - light_core) / (
+                        light_radius - light_core
+                    )
+                else:
+                    falloff = 0.0
+                if falloff > 0 and self._light_los(
+                    index,
+                    light_x,
+                    light_y,
+                    col,
+                    row,
+                    block_center_x,
+                    block_center_y,
+                ):
+                    lit += falloff
+
+        if not self.disable_player_light:
+            lit += self._player_vision(
+                col,
+                row,
+                int(self.player.center_x // tile_width),
+                int(self.player.center_y // tile_height),
+                light_source_tiles,
+            )
+
+        lit = max(0.0, min(1.0, lit))
+        return round(lit * steps) / steps
+
+    def debug_log_move(self) -> None:
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+        tile_col = int(self.player.center_x // tile_width)
+        tile_row = int(self.player.center_y // tile_height)
+        print(
+            f"Moved: ({self.player.center_x:.0f}, {self.player.center_y:.0f}) "
+            f"| Tile: ({tile_col}, {tile_row}) "
+            f"| Facing: {self.player.facing} "
+            f"| HP: {self.player.hp}/{self.player.maxHp}"
+        )
+
+    def _lit_connected_to_sources(
+        self,
+        levels: dict[tuple[int, int], float],
+        lights: list[tuple[float, float]],
+        visible_lights: set[int],
+    ) -> set[tuple[int, int]]:
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+        seeds = {
+            (
+                int(self.player.center_x // tile_width),
+                int(self.player.center_y // tile_height),
+            )
+        }
+        for index in visible_lights:
+            light_x, light_y = lights[index]
+            seeds.add((int(light_x // tile_width), int(light_y // tile_height)))
+        reachable = set(seeds)
+        stack = list(seeds)
+        while stack:
+            col, row = stack.pop()
+            for neighbour in (
+                (col + 1, row),
+                (col - 1, row),
+                (col, row + 1),
+                (col, row - 1),
+            ):
+                if neighbour in levels and neighbour not in reachable:
+                    reachable.add(neighbour)
+                    stack.append(neighbour)
+        return reachable
+
+    def _lit_levels(
+        self,
+        first_col: int,
+        last_col: int,
+        first_row: int,
+        last_row: int,
+        lights: list[tuple[float, float]],
+        visible_lights: set[int],
+        light_source_tiles: set[tuple[int, int]],
+        light_radius: float,
+        light_core: float,
+    ) -> dict[tuple[int, int], float]:
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+        player_x = self.player.center_x
+        player_y = self.player.center_y
+        levels: dict[tuple[int, int], float] = {}
+        for row in range(first_row, last_row + 1):
+            block_center_y = row * tile_height + tile_height / 2
+            for col in range(first_col, last_col + 1):
+                block_center_x = col * tile_width + tile_width / 2
+                can_see = self._line_of_sight(
+                    player_x,
+                    player_y,
+                    block_center_x,
+                    block_center_y,
+                )
+                lit = self._tile_lit(
+                    col,
+                    row,
+                    can_see,
+                    lights,
+                    visible_lights,
+                    light_source_tiles,
+                    light_radius,
+                    light_core,
+                )
+                if lit > 0:
+                    levels[(col, row)] = lit
+        connected = self._lit_connected_to_sources(
+            levels, lights, visible_lights
+        )
+        return {
+            tile: level for tile, level in levels.items() if tile in connected
+        }
+
+    def debug_log_lights(self) -> None:
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+        cols = int(self.game_map.tilemap.width)
+        rows = int(self.game_map.tilemap.height)
+        light_radius = LIGHT_RADIUS_TILES * tile_width
+        light_core = light_radius * LIGHT_CORE_FRACTION
+        light_source_tiles = {
+            (int(x // tile_width), int(y // tile_height))
+            for x, y in self._map_light_positions()
+        }
+        if self.disable_map_light:
+            lights: list[tuple[float, float]] = []
+        else:
+            lights = self._light_emit_positions()
+
+        visible_lights = self._visible_light_indices(lights)
+
+        levels = self._lit_levels(
+            0,
+            cols - 1,
+            0,
+            rows - 1,
+            lights,
+            visible_lights,
+            light_source_tiles,
+            light_radius,
+            light_core,
+        )
+        lit_count = 0
+        for row in range(rows):
+            for col in range(cols):
+                lit = levels.get((col, row))
+                if lit is not None:
+                    lit_count += 1
+                    print(f"[lights] tile=({col},{row}) level={lit:.2f}")
+        print(
+            f"[lights] {self.map_name}: {lit_count} lit tiles "
+            f"out of {cols * rows} in player view "
+            f"({len(visible_lights)}/{len(lights)} sources seen)"
+        )
+
+    def draw_darkness(self) -> None:
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+        map_cols = int(self.game_map.tilemap.width)
+        map_rows = int(self.game_map.tilemap.height)
+
+        light_radius = LIGHT_RADIUS_TILES * tile_width
+        light_core = light_radius * LIGHT_CORE_FRACTION
+        light_source_tiles = {
+            (int(x // tile_width), int(y // tile_height))
+            for x, y in self._map_light_positions()
+        }
+        if self.disable_map_light:
+            lights: list[tuple[float, float]] = []
+            light_tiles: set[tuple[int, int]] = set()
+        else:
+            lights = self._light_emit_positions()
+            light_tiles = light_source_tiles
+
+        visible_lights = self._visible_light_indices(lights)
+
+        camera = self.camera.world
+        center_x, center_y = camera.position
+        half_width = self.width / (2 * camera.zoom)
+        half_height = self.height / (2 * camera.zoom)
+
+        first_col = max(0, int((center_x - half_width) // tile_width) - 1)
+        last_col = min(
+            map_cols - 1,
+            int((center_x + half_width) // tile_width) + 1,
+        )
+        first_row = max(0, int((center_y - half_height) // tile_height) - 1)
+        last_row = min(
+            map_rows - 1,
+            int((center_y + half_height) // tile_height) + 1,
+        )
+        if first_col > last_col or first_row > last_row:
+            return
+
+        tex_cols = last_col - first_col + 1
+        tex_rows = last_row - first_row + 1
+        buffer = bytearray(tex_cols * tex_rows * 4)
+        shadow = DARKNESS_COLOR
+        tint = LIGHT_SOURCE_TINT_COLOR
+        tint_alpha = LIGHT_SOURCE_TINT_ALPHA
+
+        levels = self._lit_levels(
+            first_col,
+            last_col,
+            first_row,
+            last_row,
+            lights,
+            visible_lights,
+            light_source_tiles,
+            light_radius,
+            light_core,
+        )
+
+        for row in range(first_row, last_row + 1):
+            image_row = last_row - row
+            for col in range(first_col, last_col + 1):
+                lit = levels.get((col, row), 0.0)
+                shadow_alpha = int(DARKNESS_ALPHA * (1 - lit))
+
+                offset = (image_row * tex_cols + (col - first_col)) * 4
+                if lit > 0 and (col, row) in light_tiles:
+                    buffer[offset] = tint[0]
+                    buffer[offset + 1] = tint[1]
+                    buffer[offset + 2] = tint[2]
+                    buffer[offset + 3] = tint_alpha
+                else:
+                    buffer[offset] = shadow[0]
+                    buffer[offset + 1] = shadow[1]
+                    buffer[offset + 2] = shadow[2]
+                    buffer[offset + 3] = shadow_alpha
+
+        texture = arcade.Texture(
+            Image.frombytes("RGBA", (tex_cols, tex_rows), bytes(buffer))
+        )
+        arcade.draw_texture_rect(
+            texture,
+            arcade.LRBT(
+                first_col * tile_width,
+                (last_col + 1) * tile_width,
+                first_row * tile_height,
+                (last_row + 1) * tile_height,
+            ),
+            pixelated=True,
+        )
+
     def on_draw(self) -> None:
         self.clear()
 
@@ -472,6 +965,8 @@ class GameWindow(arcade.Window):
 
         for effect in self.attack_effects:
             effect.draw()
+
+        self.draw_darkness()
 
         self.camera.use_gui()
         self.heart_list.draw(pixelated=True)
@@ -811,6 +1306,25 @@ class GameWindow(arcade.Window):
         if self.currentScreen == "game":
             self.keys.discard(symbol)
 
+    def update_camera(self, delta_time: float) -> None:
+        if not self.freecam:
+            self.camera.follow(self.player.center_x, self.player.center_y)
+            return
+
+        speed = CAMERA_FREECAM_SPEED * delta_time
+        move_x = 0.0
+        move_y = 0.0
+        if arcade.key.LEFT in self.keys:
+            move_x -= speed
+        if arcade.key.RIGHT in self.keys:
+            move_x += speed
+        if arcade.key.UP in self.keys:
+            move_y += speed
+        if arcade.key.DOWN in self.keys:
+            move_y -= speed
+        if move_x or move_y:
+            self.camera.pan(move_x, move_y)
+
     def on_mouse_motion(self, x, y, dx, dy) -> None:
         if self.currentScreen == "menu":
             self.menu.update_mouse(x, y)
@@ -848,11 +1362,13 @@ class GameWindow(arcade.Window):
 
         self.enemies.update(delta_time)
         bumped_fountain = self.player.updatePlayer(self.keys, delta_time)
-        self.camera.follow(self.player.center_x, self.player.center_y)
+        self.update_camera(delta_time)
         self.enemies.update_triggers(self.player)
 
         if self.player.just_finished_move:
             self.enemies.step(self.player)
+            self.debug_log_move()
+            self.debug_log_lights()
 
         if bumped_fountain:
             self.open_fountain()

@@ -47,6 +47,11 @@ class CameraController:
         self._player_y = y
         self.world.position = self._clamped_position(x, y)
 
+    def pan(self, dx: float, dy: float) -> None:
+        x, y = self.world.position
+        self._player_x, self._player_y = self._clamped_position(x + dx, y + dy)
+        self.world.position = (self._player_x, self._player_y)
+
     def _clamped_position(self, x: float, y: float) -> tuple[float, float]:
         if self.world_bounds is None:
             return x, y

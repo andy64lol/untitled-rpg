@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="18" height="15" tilewidth="32" tileheight="32" infinite="0" nextlayerid="13" nextobjectid="21">
+<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="18" height="15" tilewidth="32" tileheight="32" infinite="0" nextlayerid="13" nextobjectid="26">
  <tileset firstgid="1" source="../assets/tiles/tilesets/dungeon1.tsx"/>
  <layer id="1" name="tiles" width="18" height="15">
   <data encoding="csv">
-2,2,4,2,2,11,4,2,2,13,11,2,4,2,18,4,20,11,
+2,13,4,2,2,11,4,2,2,13,11,2,4,2,18,4,20,11,
 2,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,2,
 20,10,3,3,3,3,3,3,10,3,10,3,3,3,10,3,10,2,
 2,10,3,10,10,10,10,10,10,3,10,3,1,3,10,3,10,18,
@@ -77,6 +77,21 @@
    <point/>
   </object>
   <object id="20" name="fountain" x="494.203" y="373.708">
+   <point/>
+  </object>
+  <object id="21" name="light" x="304.434" y="19.1468">
+   <point/>
+  </object>
+  <object id="22" name="light" x="47.2288" y="24.8908">
+   <point/>
+  </object>
+  <object id="23" name="light" x="14.6792" y="215.721">
+   <point/>
+  </object>
+  <object id="24" name="light" x="302.52" y="469.735">
+   <point/>
+  </object>
+  <object id="25" name="light" x="558.449" y="221.465">
    <point/>
   </object>
  </objectgroup>

@@ -1,7 +1,7 @@
 import arcade
 
+import font  # noqa: F401
 from config import *
-import font
 
 
 class DialogueBox:

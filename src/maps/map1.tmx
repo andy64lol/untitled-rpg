@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="18" height="15" tilewidth="32" tileheight="32" infinite="0" nextlayerid="10" nextobjectid="12">
+<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="18" height="15" tilewidth="32" tileheight="32" infinite="0" nextlayerid="10" nextobjectid="19">
  <tileset firstgid="1" source="../assets/tiles/tilesets/dungeon1.tsx"/>
  <layer id="1" name="tiles" width="18" height="15">
   <data encoding="csv">
-11,2,18,2,2,2,18,2,2,2,18,2,2,2,2,2,2,11,
+11,2,18,13,2,2,18,4,2,2,18,2,2,13,2,2,2,11,
 2,1,3,10,10,10,10,10,3,3,3,2,10,10,10,10,10,18,
 2,10,3,10,3,10,3,10,10,10,1,2,10,10,10,19,10,2,
 18,10,3,10,3,10,3,3,3,3,3,2,10,10,10,10,10,2,
 2,10,10,10,3,10,10,10,10,10,3,2,10,10,10,10,10,18,
-11,3,3,3,3,3,3,3,3,10,3,2,2,2,10,2,2,2,
+11,3,3,3,3,3,3,3,3,10,3,13,2,2,10,2,2,2,
 2,3,10,10,10,10,3,10,10,10,3,3,3,3,10,3,3,11,
 18,3,10,3,10,3,3,10,3,10,10,10,10,10,10,3,1,2,
-2,3,10,3,10,3,10,10,3,10,3,3,3,3,10,3,10,18,
+13,3,10,3,10,3,10,10,3,10,3,3,3,3,10,3,10,18,
 11,3,10,3,10,3,10,3,3,10,3,10,3,10,10,10,10,2,
 2,3,1,3,10,3,10,3,10,10,3,10,3,3,3,3,10,2,
 18,3,3,3,10,3,10,3,10,10,10,10,10,10,10,3,3,2,
-2,3,17,10,10,10,10,3,10,3,3,3,3,3,3,3,1,2,
+2,3,17,10,10,10,10,3,10,3,3,3,3,3,3,3,1,13,
 18,3,3,3,3,3,3,3,10,10,10,10,10,10,10,10,10,18,
-2,2,2,11,2,11,2,11,2,9,2,11,2,2,18,2,2,11
+2,2,2,11,2,11,2,11,2,9,13,11,2,2,18,2,2,11
 </data>
  </layer>
  <objectgroup id="2" name="objects">
@@ -43,6 +43,24 @@
    <point/>
   </object>
   <object id="11" name="fountain" x="80" y="404.667">
+   <point/>
+  </object>
+  <object id="12" name="light" x="110.966" y="25.826">
+   <point/>
+  </object>
+  <object id="14" name="light" x="432.889" y="21.4378">
+   <point/>
+  </object>
+  <object id="15" name="light" x="369.342" y="175.389">
+   <point/>
+  </object>
+  <object id="16" name="light" x="563.803" y="402.473">
+   <point/>
+  </object>
+  <object id="17" name="light" x="14.041" y="277.629">
+   <point/>
+  </object>
+  <object id="18" name="light" x="336.705" y="465.753">
    <point/>
   </object>
  </objectgroup>
