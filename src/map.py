@@ -46,6 +46,16 @@ class GameMap:
         self.fake_chests = self._objects_starting_with(
             map_objects, FAKE_CHEST_PREFIX
         )
+        self.block_light_objects = self._objects_named(
+            map_objects, BLOCK_LIGHT_OBJECT_NAME
+        )
+        self.lightable_objects = self._objects_named(
+            map_objects, LIGHTABLE_TILE_OBJECT_NAME
+        )
+        self.lightable_tiles = {
+            self._object_center_tile(map_object)
+            for map_object in self.lightable_objects
+        } & self.solid_tiles
         self.door = self._objects_named(map_objects, DOOR_OBJECT_NAME)
         self.spawn = self._spawn_position(map_objects)
         self.enemy_spawns = self._enemy_spawn_points(
@@ -70,17 +80,83 @@ class GameMap:
         self.collision.extend(self.fake_chest_colliders)
         self.collision.extend(self.door_colliders)
 
-        self.light_blockers = self.solid_tiles - self._object_tiles(
+        transparent_tiles = self._object_area_tiles(
             self.fountains + self.chests + self.fake_chests
         )
+        transparent_tiles.update(self._sprite_tiles(self.spikes))
+        self.light_blockers = self.solid_tiles - transparent_tiles
+        self.block_light_tiles = self._object_area_tiles(
+            self.block_light_objects
+        )
+        self.player_light_blockers = (
+            self.light_blockers | self.block_light_tiles
+        )
+        self.player_lightable_tiles = (
+            self.lightable_tiles - self.block_light_tiles
+        )
+        self.source_lightable_tiles = (
+            self.lightable_tiles - self.block_light_tiles
+        )
 
-    def _object_tiles(self, objects: list[Any]) -> set[tuple[int, int]]:
+    def _object_area_tiles(
+        self, objects: list[Any]
+    ) -> set[tuple[int, int]]:
         tile_width = self.tilemap.tile_width
         tile_height = self.tilemap.tile_height
-        return {
-            (int(x // tile_width), int(y // tile_height))
-            for x, y in (self.object_position(obj) for obj in objects)
-        }
+        tiles: set[tuple[int, int]] = set()
+        for map_object in objects:
+            shape = map_object.shape
+            if shape and isinstance(shape[0], (tuple, list)):
+                xs = [float(point[0]) for point in shape]
+                ys = [float(point[1]) for point in shape]
+            else:
+                x, y = self.object_position(map_object)
+                xs = [x]
+                ys = [y]
+            first_col = int((min(xs) + 0.5) // tile_width)
+            last_col = max(
+                first_col, int((max(xs) - 0.5) // tile_width)
+            )
+            first_row = int((min(ys) + 0.5) // tile_height)
+            last_row = max(
+                first_row, int((max(ys) - 0.5) // tile_height)
+            )
+            for col in range(first_col, last_col + 1):
+                for row in range(first_row, last_row + 1):
+                    tiles.add((col, row))
+        return tiles
+
+    def _object_center_tile(
+        self, map_object: Any
+    ) -> tuple[int, int]:
+        shape = map_object.shape
+        if shape and isinstance(shape[0], (tuple, list)):
+            xs = [float(point[0]) for point in shape]
+            ys = [float(point[1]) for point in shape]
+            x = (min(xs) + max(xs)) / 2
+            y = (min(ys) + max(ys)) / 2
+        else:
+            x, y = self.object_position(map_object)
+        return (
+            int(x // self.tilemap.tile_width),
+            int(y // self.tilemap.tile_height),
+        )
+
+    def _sprite_tiles(
+        self, sprites: arcade.SpriteList[arcade.Sprite]
+    ) -> set[tuple[int, int]]:
+        tile_width = self.tilemap.tile_width
+        tile_height = self.tilemap.tile_height
+        tiles: set[tuple[int, int]] = set()
+        for sprite in sprites:
+            first_col = int(sprite.left // tile_width)
+            last_col = int((sprite.right - 1e-6) // tile_width)
+            first_row = int(sprite.bottom // tile_height)
+            last_row = int((sprite.top - 1e-6) // tile_height)
+            for col in range(first_col, last_col + 1):
+                for row in range(first_row, last_row + 1):
+                    tiles.add((col, row))
+        return tiles
 
     def _layer(self, name: str) -> arcade.SpriteList[arcade.Sprite]:
         try:
@@ -103,6 +179,8 @@ class GameMap:
     def _is_light_object(map_object: Any) -> bool:
         name = (map_object.name or "").lower()
         object_type = (map_object.type or "").lower()
+        if name.startswith(LIGHTABLE_TILE_OBJECT_NAME):
+            return False
         return name.startswith(LIGHT_OBJECT_PREFIX) or (
             object_type == LIGHT_OBJECT_TYPE
         )

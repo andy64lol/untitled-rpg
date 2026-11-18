@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import arcade
+import numpy as np
 from PIL import Image
 
 import save
@@ -77,7 +78,18 @@ class GameWindow(arcade.Window):
             self.start_map_index = max(0, min(start_level, len(MAP_FILES) - 1))
             self.map_index = self.start_map_index
         self.game_map = GameMap(MAPS_DIR / MAP_FILES[self.map_index])
-        self._los_cache: dict[tuple[int, int, int], bool] = {}
+        self._ray_cache: dict[tuple[float, float], np.ndarray] = {}
+        self._player_rays: tuple[
+            tuple[float, float, str], np.ndarray
+        ] | None = None
+        self._emit_lights: list[tuple[float, float]] | None = None
+        self._visible_bounds: (
+            tuple[float, float, float, float] | None
+        ) = None
+        self._visible_lights_cache: set[int] = set()
+        self._darkness_texture: arcade.Texture | None = None
+        self._darkness_key: tuple[Any, ...] | None = None
+        self._darkness_serial = 0
         self.chests = ChestManager(
             self.game_map.chests,
             self.game_map.fake_chests,
@@ -256,7 +268,12 @@ class GameWindow(arcade.Window):
         )
         self.fountain_cooldown = 0.0
         self.enemy_damage_timer = 0.0
-        self._los_cache.clear()
+        self._ray_cache.clear()
+        self._player_rays = None
+        self._emit_lights = None
+        self._visible_bounds = None
+        self._visible_lights_cache = set()
+        self._darkness_key = None
         self.camera.follow(self.player.center_x, self.player.center_y)
 
     def start_game(self) -> None:
@@ -471,6 +488,8 @@ class GameWindow(arcade.Window):
         return list(self.game_map.light_sources)
 
     def _light_emit_positions(self) -> list[tuple[float, float]]:
+        if self._emit_lights is not None:
+            return self._emit_lights
         tile_width = self.game_map.tilemap.tile_width
         tile_height = self.game_map.tilemap.tile_height
         solid = self.game_map.light_blockers
@@ -520,208 +539,430 @@ class GameWindow(arcade.Window):
                     best[1] * tile_height + tile_height / 2,
                 )
             )
+        self._emit_lights = emit
         return emit
 
-    def _line_of_sight(
-        self, x0: float, y0: float, x1: float, y1: float
-    ) -> bool:
-        solid = self.game_map.light_blockers
+    def _cast_ray(
+        self,
+        x0: float,
+        y0: float,
+        angle: float,
+        max_distance: float,
+        solid: set[tuple[int, int]],
+        lightable: set[tuple[int, int]],
+    ) -> float:
         if not solid:
-            return True
+            return max_distance
 
         tile_width = self.game_map.tilemap.tile_width
         tile_height = self.game_map.tilemap.tile_height
+        cols = int(self.game_map.tilemap.width)
+        rows = int(self.game_map.tilemap.height)
 
-        start = (int(x0 // tile_width), int(y0 // tile_height))
-        end = (int(x1 // tile_width), int(y1 // tile_height))
-        if start == end:
-            return True
-
-        dx = x1 - x0
-        dy = y1 - y0
+        dx = math.cos(angle)
+        dy = math.sin(angle)
         step_x = 1 if dx > 0 else -1
         step_y = 1 if dy > 0 else -1
 
+        col = int(x0 // tile_width)
+        row = int(y0 // tile_height)
+
         if dx != 0:
-            next_x = (start[0] + (1 if dx > 0 else 0)) * tile_width
-            t_max_x = (next_x - x0) / dx
+            boundary_x = (
+                col + (1 if dx > 0 else 0)
+            ) * tile_width
+            t_max_x = (boundary_x - x0) / dx
             t_delta_x = tile_width / abs(dx)
         else:
             t_max_x = math.inf
             t_delta_x = math.inf
+
         if dy != 0:
-            next_y = (start[1] + (1 if dy > 0 else 0)) * tile_height
-            t_max_y = (next_y - y0) / dy
+            boundary_y = (
+                row + (1 if dy > 0 else 0)
+            ) * tile_height
+            t_max_y = (boundary_y - y0) / dy
             t_delta_y = tile_height / abs(dy)
         else:
             t_max_y = math.inf
             t_delta_y = math.inf
 
-        col, row = start
-        while (col, row) != end:
+        distance = 0.0
+        lightable_hit = False
+        while True:
             if abs(t_max_x - t_max_y) < 1e-9:
                 next_col = col + step_x
                 next_row = row + step_y
-                if (next_col, row) in solid and (col, next_row) in solid:
-                    return False
-                if (next_col, next_row) == end:
-                    break
-                if (next_col, next_row) in solid:
-                    return False
-                col, row = next_col, next_row
+                distance = t_max_x
+                if (
+                    (next_col, row) in solid
+                    or (col, next_row) in solid
+                ):
+                    return min(distance, max_distance)
+                col = next_col
+                row = next_row
                 t_max_x += t_delta_x
                 t_max_y += t_delta_y
             elif t_max_x < t_max_y:
                 col += step_x
+                distance = t_max_x
                 t_max_x += t_delta_x
             else:
                 row += step_y
+                distance = t_max_y
                 t_max_y += t_delta_y
-            if (col, row) == end:
-                break
-            if (col, row) in solid:
-                return False
-        return True
 
-    def _light_los(
+            if distance > max_distance:
+                return max_distance
+            if not (0 <= col < cols and 0 <= row < rows):
+                return distance
+            if (col, row) in solid:
+                if (col, row) in lightable:
+                    lightable_hit = True
+                else:
+                    return distance
+            elif lightable_hit:
+                return distance
+
+    def _ray_distances(
         self,
-        index: int,
-        light_x: float,
-        light_y: float,
-        col: int,
-        row: int,
-        cx: float,
-        cy: float,
-    ) -> bool:
-        key = (index, col, row)
-        cached = self._los_cache.get(key)
+        x: float,
+        y: float,
+        max_distance: float,
+        count: int,
+        solid: set[tuple[int, int]],
+        lightable: set[tuple[int, int]],
+    ) -> np.ndarray:
+        step = 2 * math.pi / count
+        return np.array(
+            [
+                self._cast_ray(
+                    x, y, index * step, max_distance, solid, lightable
+                )
+                for index in range(count)
+            ],
+            dtype=np.float64,
+        )
+
+    def _light_ray_distances(
+        self, x: float, y: float
+    ) -> np.ndarray:
+        key = (x, y)
+        cached = self._ray_cache.get(key)
         if cached is None:
-            cached = self._line_of_sight(light_x, light_y, cx, cy)
-            self._los_cache[key] = cached
+            max_distance = (
+                LIGHT_RADIUS_TILES * self.game_map.tilemap.tile_width
+            )
+            cached = np.square(
+                self._ray_distances(
+                    x,
+                    y,
+                    max_distance,
+                    LIGHT_RAY_COUNT,
+                    self.game_map.light_blockers,
+                    self.game_map.source_lightable_tiles,
+                )
+            )
+            self._ray_cache[key] = cached
         return cached
 
-    def _player_vision(
-        self,
-        col: int,
-        row: int,
-        player_col: int,
-        player_row: int,
-        light_tiles: set[tuple[int, int]],
-    ) -> float:
-        delta_col = col - player_col
-        delta_row = row - player_row
-        distance = max(abs(delta_col), abs(delta_row))
-        if distance == 0:
-            return 1.0
-        if distance > 1:
-            return 0.0
-        if delta_col != 0 and delta_row != 0:
-            solid = self.game_map.light_blockers
+    def _player_light_origin(self) -> tuple[float, float]:
+        tile_width = self.game_map.tilemap.tile_width
+        quantum = tile_width / 4
+        x = round(self.player.center_x / quantum) * quantum
+        y = round(self.player.center_y / quantum) * quantum
+        return x, y
 
-            def blocks(tile: tuple[int, int]) -> bool:
-                return tile in solid and tile not in light_tiles
-
-            blocked = blocks(
-                (player_col + delta_col, player_row),
-            ) and blocks(
-                (player_col, player_row + delta_row),
+    def _player_ray_distances(
+        self, x: float, y: float
+    ) -> np.ndarray:
+        facing = self.player.facing
+        key = (x, y, facing)
+        cached = self._player_rays
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        max_distance = (
+            PLAYER_VISION_TILES * self.game_map.tilemap.tile_width
+        )
+        offset_x, offset_y = FACING_OFFSETS[facing]
+        center = math.atan2(offset_y, offset_x)
+        half_angle = math.radians(PLAYER_LIGHT_CONE_DEGREES / 2)
+        step = (
+            2 * half_angle / (PLAYER_RAY_COUNT - 1)
+            if PLAYER_RAY_COUNT > 1
+            else 0.0
+        )
+        distances = np.square(
+            np.array(
+                [
+                    self._cast_ray(
+                        x,
+                        y,
+                        center - half_angle + index * step,
+                        max_distance,
+                        self.game_map.player_light_blockers,
+                        self.game_map.player_lightable_tiles,
+                    )
+                    for index in range(PLAYER_RAY_COUNT)
+                ],
+                dtype=np.float64,
             )
-            if blocked:
-                return 0.0
-        return 1 - 1 / PLAYER_VISION_TILES
+        )
+        self._player_rays = (key, distances)
+        return distances
+
+    @staticmethod
+    def _window_bounds(
+        values: np.ndarray, center: float, radius: float
+    ) -> tuple[int, int]:
+        step = float(values[1] - values[0]) if len(values) > 1 else 1.0
+        first = int(
+            max(0, math.floor((center - radius - values[0]) / step))
+        )
+        last = int(
+            min(
+                len(values),
+                math.ceil((center + radius - values[0]) / step) + 1,
+            )
+        )
+        return first, last
+
+    @classmethod
+    def _add_radial_light(
+        cls,
+        lit: np.ndarray,
+        xs: np.ndarray,
+        ys: np.ndarray,
+        center_x: float,
+        center_y: float,
+        ray_squares: np.ndarray,
+        radius: float,
+        peak: float,
+    ) -> None:
+        first_x, last_x = cls._window_bounds(xs, center_x, radius)
+        first_y, last_y = cls._window_bounds(ys, center_y, radius)
+        if first_x >= last_x or first_y >= last_y:
+            return
+
+        dx = xs[first_x:last_x] - center_x
+        dy = ys[first_y:last_y] - center_y
+        distance_squared = dy[:, None] ** 2 + dx[None, :] ** 2
+        count = len(ray_squares)
+        angles = np.arctan2(dy[:, None], dx[None, :]) % (
+            2 * math.pi
+        )
+        indices = (angles * (count / (2 * math.pi))).astype(
+            np.int32
+        ) % count
+        visible = distance_squared <= ray_squares[indices]
+        falloff = 1.0 - distance_squared / (radius * radius)
+        np.clip(falloff, 0.0, 1.0, out=falloff)
+        falloff *= peak
+        falloff *= visible
+        window = lit[first_y:last_y, first_x:last_x]
+        window += falloff
+
+    @classmethod
+    def _add_cone_light(
+        cls,
+        lit: np.ndarray,
+        xs: np.ndarray,
+        ys: np.ndarray,
+        center_x: float,
+        center_y: float,
+        facing_angle: float,
+        ray_squares: np.ndarray,
+        radius: float,
+        peak: float,
+        half_angle: float,
+        edge_fraction: float,
+        inner_radius: float,
+    ) -> None:
+        first_x, last_x = cls._window_bounds(xs, center_x, radius)
+        first_y, last_y = cls._window_bounds(ys, center_y, radius)
+        if first_x >= last_x or first_y >= last_y:
+            return
+
+        dx = xs[first_x:last_x] - center_x
+        dy = ys[first_y:last_y] - center_y
+        distance_squared = dy[:, None] ** 2 + dx[None, :] ** 2
+        angles = np.arctan2(dy[:, None], dx[None, :])
+        offset = (
+            angles - facing_angle + math.pi
+        ) % (2 * math.pi) - math.pi
+
+        count = len(ray_squares)
+        if count > 1:
+            step = 2 * half_angle / (count - 1)
+            indices = np.rint(
+                (offset + half_angle) / step
+            ).astype(np.int32)
+            np.clip(indices, 0, count - 1, out=indices)
+        else:
+            indices = np.zeros(distance_squared.shape, dtype=np.int32)
+
+        inside = np.abs(offset) <= half_angle
+        visible = distance_squared <= ray_squares[indices]
+        visible &= inside
+
+        falloff = 1.0 - distance_squared / (radius * radius)
+        np.clip(falloff, 0.0, 1.0, out=falloff)
+        edge = half_angle * edge_fraction
+        if edge > 0:
+            fade = np.clip(
+                (half_angle - np.abs(offset)) / edge, 0.0, 1.0
+            )
+            falloff *= fade
+        falloff *= peak
+        falloff *= visible
+
+        inner = 1.0 - distance_squared / (inner_radius * inner_radius)
+        np.clip(inner, 0.0, 1.0, out=inner)
+        inner *= peak
+        np.maximum(falloff, inner, out=falloff)
+
+        window = lit[first_y:last_y, first_x:last_x]
+        window += falloff
+
+    def _light_values(
+        self,
+        xs: np.ndarray,
+        ys: np.ndarray,
+        lights: list[tuple[float, float]],
+        visible_lights: set[int],
+    ) -> np.ndarray:
+        tile_width = self.game_map.tilemap.tile_width
+        light_radius = LIGHT_RADIUS_TILES * tile_width
+        player_radius = PLAYER_VISION_TILES * tile_width
+        lit = np.zeros((len(ys), len(xs)), dtype=np.float32)
+
+        if not self.disable_player_light:
+            player_x, player_y = self._player_light_origin()
+            offset_x, offset_y = FACING_OFFSETS[self.player.facing]
+            self._add_cone_light(
+                lit,
+                xs,
+                ys,
+                player_x,
+                player_y,
+                math.atan2(offset_y, offset_x),
+                self._player_ray_distances(player_x, player_y),
+                player_radius,
+                PLAYER_LIGHT_PEAK,
+                math.radians(PLAYER_LIGHT_CONE_DEGREES / 2),
+                PLAYER_LIGHT_EDGE_FRACTION,
+                PLAYER_LIGHT_INNER_TILES * tile_width,
+            )
+
+        for index in visible_lights:
+            light_x, light_y = lights[index]
+            self._add_radial_light(
+                lit,
+                xs,
+                ys,
+                light_x,
+                light_y,
+                self._light_ray_distances(light_x, light_y),
+                light_radius,
+                LIGHT_PEAK,
+            )
+
+        return np.clip(lit, 0.0, 1.0)
+
+    def _tint_glow(
+        self,
+        xs: np.ndarray,
+        ys: np.ndarray,
+        light: np.ndarray,
+        lights: list[tuple[float, float]],
+        visible_lights: set[int],
+    ) -> np.ndarray:
+        radius = (
+            LIGHT_SOURCE_TINT_RADIUS_TILES
+            * self.game_map.tilemap.tile_width
+        )
+        step = float(xs[1] - xs[0]) if len(xs) > 1 else 1.0
+        half = max(1, math.ceil(radius / step))
+        offsets = np.arange(-half, half + 1, dtype=np.float32) * step
+        kernel_y, kernel_x = np.meshgrid(
+            offsets, offsets, indexing="ij"
+        )
+        kernel = 1.0 - (
+            np.sqrt(kernel_x**2 + kernel_y**2) / radius
+        )
+        np.clip(kernel, 0.0, 1.0, out=kernel)
+        kernel *= kernel
+
+        glow = np.zeros_like(light)
+        left = float(xs[0]) - step / 2
+        bottom = float(ys[0]) - step / 2
+        for index in visible_lights:
+            light_x, light_y = lights[index]
+            center_x = round((light_x - left) / step - 0.5)
+            center_y = round((light_y - bottom) / step - 0.5)
+            first_x = max(0, center_x - half)
+            last_x = min(len(xs), center_x + half + 1)
+            first_y = max(0, center_y - half)
+            last_y = min(len(ys), center_y + half + 1)
+            if first_x >= last_x or first_y >= last_y:
+                continue
+            kernel_x0 = first_x - (center_x - half)
+            kernel_y0 = first_y - (center_y - half)
+            patch = kernel[
+                kernel_y0 : kernel_y0 + (last_y - first_y),
+                kernel_x0 : kernel_x0 + (last_x - first_x),
+            ]
+            window = glow[first_y:last_y, first_x:last_x]
+            np.maximum(window, patch, out=window)
+        glow *= light
+        return glow
+
+    def _lightmap_bounds(
+        self,
+    ) -> tuple[float, float, float, float]:
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+        camera = self.camera.world
+        center_x, center_y = camera.position
+        half_width = self.width / (2 * camera.zoom)
+        half_height = self.height / (2 * camera.zoom)
+        step = tile_width / LIGHTMAP_SAMPLES_PER_TILE
+        left = math.floor(
+            (center_x - half_width - tile_width) / step
+        ) * step
+        right = math.ceil(
+            (center_x + half_width + tile_width) / step
+        ) * step
+        bottom = math.floor(
+            (center_y - half_height - tile_height) / step
+        ) * step
+        top = math.ceil(
+            (center_y + half_height + tile_height) / step
+        ) * step
+        return left, right, bottom, top
 
     def _visible_light_indices(
         self, lights: list[tuple[float, float]]
     ) -> set[int]:
-        tile_width = self.game_map.tilemap.tile_width
-        tile_height = self.game_map.tilemap.tile_height
-        cols = int(self.game_map.tilemap.width)
-        rows = int(self.game_map.tilemap.height)
-        player_x = self.player.center_x
-        player_y = self.player.center_y
-        visible: set[int] = set()
-        for index, (light_x, light_y) in enumerate(lights):
-            if math.hypot(player_x - light_x, player_y - light_y) > (
-                LIGHT_RADIUS_TILES * tile_width
-            ):
-                continue
-            light_col = int(light_x // tile_width)
-            light_row = int(light_y // tile_height)
-            for dcol in (-1, 0, 1):
-                for drow in (-1, 0, 1):
-                    anchor_col = light_col + dcol
-                    anchor_row = light_row + drow
-                    if not (0 <= anchor_col < cols and 0 <= anchor_row < rows):
-                        continue
-                    if self._line_of_sight(
-                        player_x,
-                        player_y,
-                        anchor_col * tile_width + tile_width / 2,
-                        anchor_row * tile_height + tile_height / 2,
-                    ):
-                        visible.add(index)
-                        break
-                else:
-                    continue
-                break
-        return visible
-
-    def _tile_lit(
-        self,
-        col: int,
-        row: int,
-        can_see: bool,
-        lights: list[tuple[float, float]],
-        visible_lights: set[int],
-        light_source_tiles: set[tuple[int, int]],
-        light_radius: float,
-        light_core: float,
-    ) -> float:
-        tile_width = self.game_map.tilemap.tile_width
-        tile_height = self.game_map.tilemap.tile_height
-        block_center_x = col * tile_width + tile_width / 2
-        block_center_y = row * tile_height + tile_height / 2
-        steps = max(1, LIGHT_FALLOFF_STEPS)
-
-        lit = 0.0
-        if can_see:
-            for index, (light_x, light_y) in enumerate(lights):
-                if index not in visible_lights:
-                    continue
-                distance = math.hypot(
-                    block_center_x - light_x,
-                    block_center_y - light_y,
-                )
-                if distance <= light_core:
-                    falloff = 1.0
-                elif distance < light_radius:
-                    falloff = 1 - (distance - light_core) / (
-                        light_radius - light_core
-                    )
-                else:
-                    falloff = 0.0
-                if falloff > 0 and self._light_los(
-                    index,
-                    light_x,
-                    light_y,
-                    col,
-                    row,
-                    block_center_x,
-                    block_center_y,
-                ):
-                    lit += falloff
-
-        if not self.disable_player_light:
-            lit += self._player_vision(
-                col,
-                row,
-                int(self.player.center_x // tile_width),
-                int(self.player.center_y // tile_height),
-                light_source_tiles,
+        left, right, bottom, top = self._lightmap_bounds()
+        if self._visible_bounds == (left, right, bottom, top):
+            return self._visible_lights_cache
+        radius = (
+            LIGHT_RADIUS_TILES * self.game_map.tilemap.tile_width
+        )
+        visible = {
+            index
+            for index, (light_x, light_y) in enumerate(lights)
+            if (
+                light_x + radius >= left
+                and light_x - radius <= right
+                and light_y + radius >= bottom
+                and light_y - radius <= top
             )
-
-        lit = max(0.0, min(1.0, lit))
-        return round(lit * steps) / steps
+        }
+        self._visible_bounds = (left, right, bottom, top)
+        self._visible_lights_cache = visible
+        return visible
 
     def debug_log_move(self) -> None:
         tile_width = self.game_map.tilemap.tile_width
@@ -735,120 +976,33 @@ class GameWindow(arcade.Window):
             f"| HP: {self.player.hp}/{self.player.maxHp}"
         )
 
-    def _lit_connected_to_sources(
-        self,
-        levels: dict[tuple[int, int], float],
-        lights: list[tuple[float, float]],
-        visible_lights: set[int],
-    ) -> set[tuple[int, int]]:
-        tile_width = self.game_map.tilemap.tile_width
-        tile_height = self.game_map.tilemap.tile_height
-        seeds = {
-            (
-                int(self.player.center_x // tile_width),
-                int(self.player.center_y // tile_height),
-            )
-        }
-        for index in visible_lights:
-            light_x, light_y = lights[index]
-            seeds.add((int(light_x // tile_width), int(light_y // tile_height)))
-        reachable = set(seeds)
-        stack = list(seeds)
-        while stack:
-            col, row = stack.pop()
-            for neighbour in (
-                (col + 1, row),
-                (col - 1, row),
-                (col, row + 1),
-                (col, row - 1),
-            ):
-                if neighbour in levels and neighbour not in reachable:
-                    reachable.add(neighbour)
-                    stack.append(neighbour)
-        return reachable
-
-    def _lit_levels(
-        self,
-        first_col: int,
-        last_col: int,
-        first_row: int,
-        last_row: int,
-        lights: list[tuple[float, float]],
-        visible_lights: set[int],
-        light_source_tiles: set[tuple[int, int]],
-        light_radius: float,
-        light_core: float,
-    ) -> dict[tuple[int, int], float]:
-        tile_width = self.game_map.tilemap.tile_width
-        tile_height = self.game_map.tilemap.tile_height
-        player_x = self.player.center_x
-        player_y = self.player.center_y
-        levels: dict[tuple[int, int], float] = {}
-        for row in range(first_row, last_row + 1):
-            block_center_y = row * tile_height + tile_height / 2
-            for col in range(first_col, last_col + 1):
-                block_center_x = col * tile_width + tile_width / 2
-                can_see = self._line_of_sight(
-                    player_x,
-                    player_y,
-                    block_center_x,
-                    block_center_y,
-                )
-                lit = self._tile_lit(
-                    col,
-                    row,
-                    can_see,
-                    lights,
-                    visible_lights,
-                    light_source_tiles,
-                    light_radius,
-                    light_core,
-                )
-                if lit > 0:
-                    levels[(col, row)] = lit
-        connected = self._lit_connected_to_sources(
-            levels, lights, visible_lights
-        )
-        return {
-            tile: level for tile, level in levels.items() if tile in connected
-        }
-
     def debug_log_lights(self) -> None:
         tile_width = self.game_map.tilemap.tile_width
         tile_height = self.game_map.tilemap.tile_height
         cols = int(self.game_map.tilemap.width)
         rows = int(self.game_map.tilemap.height)
-        light_radius = LIGHT_RADIUS_TILES * tile_width
-        light_core = light_radius * LIGHT_CORE_FRACTION
-        light_source_tiles = {
-            (int(x // tile_width), int(y // tile_height))
-            for x, y in self._map_light_positions()
-        }
         if self.disable_map_light:
             lights: list[tuple[float, float]] = []
         else:
             lights = self._light_emit_positions()
 
         visible_lights = self._visible_light_indices(lights)
-
-        levels = self._lit_levels(
-            0,
-            cols - 1,
-            0,
-            rows - 1,
+        xs = (np.arange(cols, dtype=np.float32) + 0.5) * tile_width
+        ys = (np.arange(rows, dtype=np.float32) + 0.5) * tile_height
+        levels = self._light_values(
+            xs,
+            ys,
             lights,
             visible_lights,
-            light_source_tiles,
-            light_radius,
-            light_core,
         )
+
         lit_count = 0
         for row in range(rows):
             for col in range(cols):
-                lit = levels.get((col, row))
-                if lit is not None:
+                level = float(levels[row, col])
+                if level > 0.01:
                     lit_count += 1
-                    print(f"[lights] tile=({col},{row}) level={lit:.2f}")
+                    print(f"[lights] tile=({col},{row}) level={level:.2f}")
         print(
             f"[lights] {self.map_name}: {lit_count} lit tiles "
             f"out of {cols * rows} in player view "
@@ -857,92 +1011,99 @@ class GameWindow(arcade.Window):
 
     def draw_darkness(self) -> None:
         tile_width = self.game_map.tilemap.tile_width
-        tile_height = self.game_map.tilemap.tile_height
-        map_cols = int(self.game_map.tilemap.width)
-        map_rows = int(self.game_map.tilemap.height)
-
-        light_radius = LIGHT_RADIUS_TILES * tile_width
-        light_core = light_radius * LIGHT_CORE_FRACTION
-        light_source_tiles = {
-            (int(x // tile_width), int(y // tile_height))
-            for x, y in self._map_light_positions()
-        }
         if self.disable_map_light:
             lights: list[tuple[float, float]] = []
-            light_tiles: set[tuple[int, int]] = set()
         else:
             lights = self._light_emit_positions()
-            light_tiles = light_source_tiles
 
         visible_lights = self._visible_light_indices(lights)
 
-        camera = self.camera.world
-        center_x, center_y = camera.position
-        half_width = self.width / (2 * camera.zoom)
-        half_height = self.height / (2 * camera.zoom)
+        step = tile_width / LIGHTMAP_SAMPLES_PER_TILE
+        left, right, bottom, top = self._lightmap_bounds()
+        tex_cols = round((right - left) / step)
+        tex_rows = round((top - bottom) / step)
 
-        first_col = max(0, int((center_x - half_width) // tile_width) - 1)
-        last_col = min(
-            map_cols - 1,
-            int((center_x + half_width) // tile_width) + 1,
+        key = (
+            left,
+            right,
+            bottom,
+            top,
+            self.map_index,
+            self._player_light_origin(),
+            self.player.facing,
+            frozenset(visible_lights),
         )
-        first_row = max(0, int((center_y - half_height) // tile_height) - 1)
-        last_row = min(
-            map_rows - 1,
-            int((center_y + half_height) // tile_height) + 1,
+        rebuild = (
+            self._darkness_key != key
+            or self._darkness_texture is None
+            or self._darkness_texture.size != (tex_cols, tex_rows)
         )
-        if first_col > last_col or first_row > last_row:
+        if rebuild:
+            xs = np.arange(
+                tex_cols, dtype=np.float32
+            ) * step + np.float32(left + step / 2)
+            ys = np.arange(
+                tex_rows, dtype=np.float32
+            ) * step + np.float32(bottom + step / 2)
+            light = self._light_values(
+                xs,
+                ys,
+                lights,
+                visible_lights,
+            )
+            glow = self._tint_glow(
+                xs,
+                ys,
+                light,
+                lights,
+                visible_lights,
+            )
+            warm = np.clip(glow * 1.5, 0.0, 1.0)
+
+            alpha = DARKNESS_ALPHA * (1.0 - light)
+            alpha = (
+                alpha * (1.0 - warm)
+                + LIGHT_SOURCE_TINT_ALPHA * warm
+            )
+            shadow = np.array(DARKNESS_COLOR, dtype=np.float64)
+            tint = np.array(
+                LIGHT_SOURCE_TINT_COLOR, dtype=np.float64
+            )
+            rgb = shadow + (tint - shadow) * warm[..., None]
+
+            rgba = np.empty((tex_rows, tex_cols, 4), dtype=np.uint8)
+            rgba[..., :3] = np.clip(rgb, 0, 255).astype(np.uint8)
+            rgba[..., 3] = np.clip(alpha, 0, 255).astype(np.uint8)
+            rgba = np.ascontiguousarray(rgba[::-1])
+            image = Image.fromarray(rgba)
+
+            if (
+                self._darkness_texture is None
+                or self._darkness_texture.size != image.size
+            ):
+                self._darkness_serial += 1
+                texture = arcade.Texture(
+                    image,
+                    hash=(
+                        f"darkness-{image.width}x{image.height}"
+                        f"-{self._darkness_serial}"
+                    ),
+                )
+                self.ctx.default_atlas.add(texture)
+                self._darkness_texture = texture
+            else:
+                self._darkness_texture.image = image
+            self.ctx.default_atlas.update_texture_image(
+                self._darkness_texture
+            )
+            self._darkness_key = key
+
+        texture = self._darkness_texture
+        if texture is None:
             return
-
-        tex_cols = last_col - first_col + 1
-        tex_rows = last_row - first_row + 1
-        buffer = bytearray(tex_cols * tex_rows * 4)
-        shadow = DARKNESS_COLOR
-        tint = LIGHT_SOURCE_TINT_COLOR
-        tint_alpha = LIGHT_SOURCE_TINT_ALPHA
-
-        levels = self._lit_levels(
-            first_col,
-            last_col,
-            first_row,
-            last_row,
-            lights,
-            visible_lights,
-            light_source_tiles,
-            light_radius,
-            light_core,
-        )
-
-        for row in range(first_row, last_row + 1):
-            image_row = last_row - row
-            for col in range(first_col, last_col + 1):
-                lit = levels.get((col, row), 0.0)
-                shadow_alpha = int(DARKNESS_ALPHA * (1 - lit))
-
-                offset = (image_row * tex_cols + (col - first_col)) * 4
-                if lit > 0 and (col, row) in light_tiles:
-                    buffer[offset] = tint[0]
-                    buffer[offset + 1] = tint[1]
-                    buffer[offset + 2] = tint[2]
-                    buffer[offset + 3] = tint_alpha
-                else:
-                    buffer[offset] = shadow[0]
-                    buffer[offset + 1] = shadow[1]
-                    buffer[offset + 2] = shadow[2]
-                    buffer[offset + 3] = shadow_alpha
-
-        texture = arcade.Texture(
-            Image.frombytes("RGBA", (tex_cols, tex_rows), bytes(buffer))
-        )
         arcade.draw_texture_rect(
             texture,
-            arcade.LRBT(
-                first_col * tile_width,
-                (last_col + 1) * tile_width,
-                first_row * tile_height,
-                (last_row + 1) * tile_height,
-            ),
-            pixelated=True,
+            arcade.LRBT(left, right, bottom, top),
         )
 
     def on_draw(self) -> None:
