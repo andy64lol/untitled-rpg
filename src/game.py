@@ -11,7 +11,7 @@ from camera import CameraController
 from chests import ChestManager
 from config import *
 from dialogue import DialogueBox, OptionBox
-from enemy import EnemyManager
+from enemy import Enemy, EnemyManager
 from inventory import ConfirmResult, Equipment, Inventory, InventoryScreen
 from items import get_combat_stats
 from load import load_state
@@ -54,6 +54,8 @@ class GameWindow(arcade.Window):
         disable_player_light: bool = False,
         freecam: bool = False,
         disable_map_light: bool = False,
+        disable_rooms: bool = False,
+        disable_fog_of_war: bool = False,
     ):
         super().__init__(
             WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, resizable=True
@@ -64,6 +66,8 @@ class GameWindow(arcade.Window):
         self.disable_player_light = disable_player_light
         self.freecam = freecam
         self.disable_map_light = disable_map_light
+        self.disable_rooms = disable_rooms
+        self.disable_fog_of_war = disable_fog_of_war
 
         self.camera = CameraController(self.width, self.height)
         self.menu = MainMenu(self.width, self.height, ASSETS_DIR)
@@ -78,6 +82,8 @@ class GameWindow(arcade.Window):
             self.start_map_index = max(0, min(start_level, len(MAP_FILES) - 1))
             self.map_index = self.start_map_index
         self.game_map = GameMap(MAPS_DIR / MAP_FILES[self.map_index])
+        self.room_mode = self.game_map.has_rooms and not self.disable_rooms
+        self._visible_rooms: frozenset[str] = frozenset()
         self._ray_cache: dict[tuple[float, float], np.ndarray] = {}
         self._player_rays: tuple[
             tuple[float, float, str], np.ndarray
@@ -241,6 +247,8 @@ class GameWindow(arcade.Window):
     def load_map(self, index: int) -> None:
         self.map_index = max(0, min(index, len(MAP_FILES) - 1))
         self.game_map = GameMap(MAPS_DIR / self.map_name)
+        self.room_mode = self.game_map.has_rooms and not self.disable_rooms
+        self._visible_rooms = frozenset()
         print(f"[map] loaded {self.map_name}")
         self.chests = ChestManager(
             self.game_map.chests,
@@ -964,6 +972,31 @@ class GameWindow(arcade.Window):
         self._visible_lights_cache = visible
         return visible
 
+    def _room_visible_rooms(self) -> frozenset[str]:
+        if not self.room_mode:
+            return frozenset()
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+        tile = (
+            int(self.player.center_x // tile_width),
+            int(self.player.center_y // tile_height),
+        )
+        return frozenset(self.game_map.tile_rooms.get(tile, ()))
+
+    def _room_visible_tiles(self) -> set[tuple[int, int]]:
+        tiles: set[tuple[int, int]] = set()
+        for room in self._room_visible_rooms():
+            tiles |= self.game_map.rooms.get(room, set())
+        tile_width = self.game_map.tilemap.tile_width
+        tile_height = self.game_map.tilemap.tile_height
+        tiles.add(
+            (
+                int(self.player.center_x // tile_width),
+                int(self.player.center_y // tile_height),
+            )
+        )
+        return tiles
+
     def debug_log_move(self) -> None:
         tile_width = self.game_map.tilemap.tile_width
         tile_height = self.game_map.tilemap.tile_height
@@ -1011,28 +1044,50 @@ class GameWindow(arcade.Window):
 
     def draw_darkness(self) -> None:
         tile_width = self.game_map.tilemap.tile_width
-        if self.disable_map_light:
+        tile_height = self.game_map.tilemap.tile_height
+        if self.room_mode:
             lights: list[tuple[float, float]] = []
+            visible_lights: set[int] = set()
+            visible_tiles = self._room_visible_tiles()
+            visible_rooms = self._room_visible_rooms()
+        elif self.disable_map_light:
+            lights = []
+            visible_lights = set()
+            visible_tiles = set()
+            visible_rooms = frozenset()
         else:
             lights = self._light_emit_positions()
-
-        visible_lights = self._visible_light_indices(lights)
+            visible_lights = self._visible_light_indices(lights)
+            visible_tiles = set()
+            visible_rooms = frozenset()
 
         step = tile_width / LIGHTMAP_SAMPLES_PER_TILE
         left, right, bottom, top = self._lightmap_bounds()
         tex_cols = round((right - left) / step)
         tex_rows = round((top - bottom) / step)
 
-        key = (
-            left,
-            right,
-            bottom,
-            top,
-            self.map_index,
-            self._player_light_origin(),
-            self.player.facing,
-            frozenset(visible_lights),
-        )
+        if self.room_mode:
+            key = (
+                left,
+                right,
+                bottom,
+                top,
+                self.map_index,
+                "rooms",
+                visible_rooms,
+                frozenset(visible_tiles),
+            )
+        else:
+            key = (
+                left,
+                right,
+                bottom,
+                top,
+                self.map_index,
+                self._player_light_origin(),
+                self.player.facing,
+                frozenset(visible_lights),
+            )
         rebuild = (
             self._darkness_key != key
             or self._darkness_texture is None
@@ -1045,26 +1100,89 @@ class GameWindow(arcade.Window):
             ys = np.arange(
                 tex_rows, dtype=np.float32
             ) * step + np.float32(bottom + step / 2)
-            light = self._light_values(
-                xs,
-                ys,
-                lights,
-                visible_lights,
-            )
-            glow = self._tint_glow(
-                xs,
-                ys,
-                light,
-                lights,
-                visible_lights,
-            )
+            if self.room_mode:
+                cols = int(self.game_map.tilemap.width)
+                rows = int(self.game_map.tilemap.height)
+                fade_tiles = 5
+                INF = 10 ** 9
+                dist = [[INF] * cols for _ in range(rows)]
+                from collections import deque
+
+                queue: deque[tuple[int, int]] = deque()
+                for (col, row) in visible_tiles:
+                    if 0 <= col < cols and 0 <= row < rows:
+                        dist[row][col] = 0
+                        queue.append((col, row))
+                while queue:
+                    col, row = queue.popleft()
+                    for dc in (-1, 0, 1):
+                        for dr in (-1, 0, 1):
+                            if dc == 0 and dr == 0:
+                                continue
+                            nc, nr = col + dc, row + dr
+                            if (
+                                0 <= nc < cols
+                                and 0 <= nr < rows
+                                and dist[nr][nc] > dist[row][col] + 1
+                            ):
+                                dist[nr][nc] = dist[row][col] + 1
+                                queue.append((nc, nr))
+
+                light = np.zeros(
+                    (tex_rows, tex_cols), dtype=np.float32
+                )
+                player_x = self.player.center_x
+                player_y = self.player.center_y
+                player_light_radius = 2.0 * tile_width
+                player_light_peak = 0.35
+                room_dim = 0.12
+                for iy in range(tex_rows):
+                    for ix in range(tex_cols):
+                        col = int(xs[ix] // tile_width)
+                        row = int(ys[iy] // tile_height)
+                        if 0 <= col < cols and 0 <= row < rows:
+                            tile_dist = dist[row][col]
+                            if tile_dist == 0:
+                                level = 1.0
+                            elif tile_dist < fade_tiles:
+                                level = max(
+                                    0.0, 1.0 - tile_dist / fade_tiles
+                                )
+                            else:
+                                level = 0.0
+                            level *= 1.0 - room_dim
+                            dx = xs[ix] - player_x
+                            dy = ys[iy] - player_y
+                            pd2 = dx * dx + dy * dy
+                            radius_sq = player_light_radius ** 2
+                            if pd2 < radius_sq:
+                                level += player_light_peak * (
+                                    1.0 - math.sqrt(pd2) / player_light_radius
+                                )
+                            light[iy, ix] = min(1.0, level)
+                glow = np.zeros_like(light)
+            else:
+                light = self._light_values(
+                    xs,
+                    ys,
+                    lights,
+                    visible_lights,
+                )
+                glow = self._tint_glow(
+                    xs,
+                    ys,
+                    light,
+                    lights,
+                    visible_lights,
+                )
             warm = np.clip(glow * 1.5, 0.0, 1.0)
 
             alpha = DARKNESS_ALPHA * (1.0 - light)
-            alpha = (
-                alpha * (1.0 - warm)
-                + LIGHT_SOURCE_TINT_ALPHA * warm
-            )
+            if not self.room_mode:
+                alpha = (
+                    alpha * (1.0 - warm)
+                    + LIGHT_SOURCE_TINT_ALPHA * warm
+                )
             shadow = np.array(DARKNESS_COLOR, dtype=np.float64)
             tint = np.array(
                 LIGHT_SOURCE_TINT_COLOR, dtype=np.float64
@@ -1121,13 +1239,30 @@ class GameWindow(arcade.Window):
 
         self.camera.use_world()
         self.game_map.draw(pixelated=True)
-        self.enemies.draw(pixelated=True)
-        self.player_list.draw(pixelated=True)
-
+        if self.room_mode and not self.disable_fog_of_war:
+            visible = self._room_visible_tiles()
+            tile_width = self.game_map.tilemap.tile_width
+            tile_height = self.game_map.tilemap.tile_height
+            visible_enemies = arcade.SpriteList[Enemy]()
+            for enemy in self.enemies.enemies:
+                enemy_tile = (
+                    int(enemy.center_x // tile_width),
+                    int(enemy.center_y // tile_height),
+                )
+                if enemy_tile in visible:
+                    visible_enemies.append(enemy)
+            visible_enemies.draw(pixelated=True)
+        else:
+            self.enemies.draw(pixelated=True)
+            if not self.room_mode:
+                self.player_list.draw(pixelated=True)
         for effect in self.attack_effects:
             effect.draw()
 
         self.draw_darkness()
+
+        if self.room_mode:
+            self.player_list.draw(pixelated=True)
 
         self.camera.use_gui()
         self.heart_list.draw(pixelated=True)

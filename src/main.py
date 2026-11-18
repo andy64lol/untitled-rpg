@@ -75,6 +75,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--disable-rooms",
+        dest="disable_rooms",
+        action="store_true",
+        help="Disable experimental room-based visibility (use light system instead)",
+    )
+
+    parser.add_argument(
+        "--disable-fog-of-war",
+        dest="disable_fog_of_war",
+        action="store_true",
+        help="Show all enemies even in dark tiles (disables fog of war)",
+    )
+
+    parser.add_argument(
         "--output-file",
         dest="output_file",
         action="store_true",
@@ -103,6 +117,8 @@ def main(argv: list[str] | None = None) -> None:
         disable_player_light=args.disable_player_light,
         freecam=args.freecam,
         disable_map_light=args.disable_map_light,
+        disable_rooms=args.disable_rooms,
+        disable_fog_of_war=args.disable_fog_of_war,
     )
     arcade.run()
 

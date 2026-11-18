@@ -62,6 +62,23 @@ class GameMap:
             self._objects_starting_with(map_objects, ENEMY_SPAWN_PREFIX)
         )
 
+        self.rooms: dict[str, set[tuple[int, int]]] = {}
+        self.tile_rooms: dict[tuple[int, int], set[str]] = {}
+        for layer in self._room_layers():
+            tiles: set[tuple[int, int]] = set()
+            height = len(layer.data)
+            for row_index, row in enumerate(layer.data):
+                arcade_row = height - 1 - row_index
+                for col_index, gid in enumerate(row):
+                    if gid and (gid & GID_FLAG_MASK):
+                        tile = (col_index, arcade_row)
+                        tiles.add(tile)
+                        self.tile_rooms.setdefault(tile, set()).add(
+                            layer.name
+                        )
+            self.rooms[layer.name] = tiles
+        self.has_rooms = bool(self.rooms)
+
         self.fountain_colliders = self._make_colliders(self.fountains)
         self.switch_colliders = self._make_colliders(self.switches)
         self.pressure_plate_colliders = self._make_colliders(
@@ -267,6 +284,21 @@ class GameMap:
     @staticmethod
     def _objects_named(objects: list[Any], name: str) -> list[Any]:
         return [obj for obj in objects if obj.name == name]
+
+    def _room_layers(self) -> list[Any]:
+        layers: list[Any] = []
+
+        def visit(layer_list: list[Any]) -> None:
+            for layer in layer_list:
+                if getattr(layer, "layers", None):
+                    visit(layer.layers)
+                    continue
+                name = (getattr(layer, "name", "") or "").lower()
+                if name.startswith("room") and getattr(layer, "data", None) is not None:
+                    layers.append(layer)
+
+        visit(list(self.tilemap.tiled_map.layers))
+        return layers
 
     @staticmethod
     def _objects_starting_with(objects: list[Any], prefix: str) -> list[Any]:
