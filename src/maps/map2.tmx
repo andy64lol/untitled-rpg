@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="18" height="15" tilewidth="32" tileheight="32" infinite="0" nextlayerid="12" nextobjectid="23">
+<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="18" height="15" tilewidth="32" tileheight="32" infinite="0" nextlayerid="12" nextobjectid="72">
  <tileset firstgid="1" source="../assets/tiles/tilesets/dungeon1.tsx"/>
  <layer id="1" name="tiles" width="18" height="15">
   <data encoding="csv">
@@ -88,6 +88,74 @@
   <object id="22" name="light" x="78.5019" y="23.6144">
    <point/>
   </object>
+  <object id="23" name="block-light" x="481.397" y="15.1346" width="69.852" height="8.73149"/>
+  <object id="24" name="block-light" x="479.651" y="34.926" width="5.23888" height="156.003"/>
+  <object id="25" name="light" x="80.3299" y="59.9563">
+   <point/>
+  </object>
+  <object id="26" name="light" x="47.7322" y="176.959">
+   <point/>
+  </object>
+  <object id="27" name="light" x="79.7478" y="438.904">
+   <point/>
+  </object>
+  <object id="28" name="light" x="338.2" y="434.829">
+   <point/>
+  </object>
+  <object id="29" name="light" x="530.293" y="341.111">
+   <point/>
+  </object>
+  <object id="30" name="light" x="432.501" y="182.78">
+   <point/>
+  </object>
+  <object id="31" name="light" x="431.336" y="24.4482">
+   <point/>
+  </object>
+  <object id="32" name="light" x="462.188" y="59.3742">
+   <point/>
+  </object>
+  <object id="33" name="light" x="433.083" y="57.6279">
+   <point/>
+  </object>
+  <object id="34" name="lightable-tile" x="72.6583" y="4.38336" width="20" height="22.6667"/>
+  <object id="35" name="lightable-tile" x="97.6886" y="7.29386" width="20" height="22.6667"/>
+  <object id="36" name="lightable-tile" x="40.0606" y="0.308658" width="20" height="22.6667"/>
+  <object id="37" name="lightable-tile" x="260.677" y="5.54756" width="20" height="22.6667"/>
+  <object id="38" name="lightable-tile" x="225.751" y="0.890759" width="20" height="22.6667"/>
+  <object id="39" name="lightable-tile" x="328.2" y="5.54756" width="20" height="22.6667"/>
+  <object id="40" name="light" x="271.841" y="26.7766">
+   <point/>
+  </object>
+  <object id="41" name="lightable-tile" x="299.095" y="2.05496" width="20" height="22.6667"/>
+  <object id="42" name="lightable-tile" x="230.99" y="36.3989" width="20" height="22.6667"/>
+  <object id="43" name="lightable-tile" x="448.695" y="41.6378" width="20" height="22.6667"/>
+  <object id="44" name="lightable-tile" x="451.606" y="68.4144" width="20" height="22.6667"/>
+  <object id="45" name="lightable-tile" x="449.277" y="95.191" width="20" height="22.6667"/>
+  <object id="46" name="lightable-tile" x="449.277" y="123.132" width="20" height="22.6667"/>
+  <object id="47" name="lightable-tile" x="452.77" y="150.491" width="20" height="22.6667"/>
+  <object id="48" name="lightable-tile" x="434.725" y="2.05496" width="20" height="22.6667"/>
+  <object id="49" name="lightable-tile" x="459.173" y="-0.273442" width="20" height="22.6667"/>
+  <object id="50" name="lightable-tile" x="549.981" y="325.121" width="20" height="22.6667"/>
+  <object id="51" name="lightable-tile" x="549.398" y="291.941" width="20" height="22.6667"/>
+  <object id="52" name="lightable-tile" x="544.16" y="257.015" width="20" height="22.6667"/>
+  <object id="53" name="lightable-tile" x="544.16" y="348.405" width="20" height="22.6667"/>
+  <object id="54" name="lightable-tile" x="546.488" y="392.644" width="20" height="22.6667"/>
+  <object id="55" name="lightable-tile" x="517.965" y="319.882" width="20" height="22.6667"/>
+  <object id="56" name="lightable-tile" x="327.618" y="452.601" width="20" height="22.6667"/>
+  <object id="58" name="lightable-tile" x="68.5836" y="444.451" width="20" height="22.6667"/>
+  <object id="59" name="lightable-tile" x="105.838" y="450.854" width="20" height="22.6667"/>
+  <object id="60" name="lightable-tile" x="130.286" y="453.765" width="20" height="22.6667"/>
+  <object id="61" name="lightable-tile" x="37.7322" y="446.78" width="20" height="22.6667"/>
+  <object id="62" name="lightable-tile" x="292.692" y="452.601" width="20" height="22.6667"/>
+  <object id="63" name="lightable-tile" x="356.141" y="450.854" width="20" height="22.6667"/>
+  <object id="64" name="lightable-tile" x="-0.104293" y="188.909" width="20" height="22.6667"/>
+  <object id="65" name="lightable-tile" x="6.88091" y="156.312" width="20" height="22.6667"/>
+  <object id="66" name="lightable-tile" x="2.80621" y="127.207" width="20" height="22.6667"/>
+  <object id="67" name="lightable-tile" x="2.80621" y="95.7731" width="20" height="22.6667"/>
+  <object id="68" name="lightable-tile" x="9.79141" y="223.835" width="20" height="22.6667"/>
+  <object id="69" name="lightable-tile" x="2.80621" y="4.38336" width="20" height="22.6667"/>
+  <object id="70" name="lightable-tile" x="10.3735" y="37.5631" width="20" height="22.6667"/>
+  <object id="71" name="lightable-tile" x="135.525" y="3.80126" width="20" height="22.6667"/>
  </objectgroup>
  <layer id="11" name="spikes" width="18" height="15" visible="0">
   <data encoding="csv">
