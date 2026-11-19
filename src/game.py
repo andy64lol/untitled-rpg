@@ -84,6 +84,8 @@ class GameWindow(arcade.Window):
         self.game_map = GameMap(MAPS_DIR / MAP_FILES[self.map_index])
         self.room_mode = self.game_map.has_rooms and not self.disable_rooms
         self._visible_rooms: frozenset[str] = frozenset()
+        self._room_light_current: np.ndarray | None = None
+        self._room_light_version = 0
         self._ray_cache: dict[tuple[float, float], np.ndarray] = {}
         self._player_rays: tuple[
             tuple[float, float, str], np.ndarray
@@ -249,6 +251,8 @@ class GameWindow(arcade.Window):
         self.game_map = GameMap(MAPS_DIR / self.map_name)
         self.room_mode = self.game_map.has_rooms and not self.disable_rooms
         self._visible_rooms = frozenset()
+        self._room_light_current = None
+        self._room_light_version = 0
         print(f"[map] loaded {self.map_name}")
         self.chests = ChestManager(
             self.game_map.chests,
@@ -997,6 +1001,67 @@ class GameWindow(arcade.Window):
         )
         return tiles
 
+    def _room_light_targets(self) -> np.ndarray:
+        cols = int(self.game_map.tilemap.width)
+        rows = int(self.game_map.tilemap.height)
+        fade_tiles = 4
+        room_dim = 0.20
+        INF = 10 ** 9
+        dist = [[INF] * cols for _ in range(rows)]
+        from collections import deque
+
+        queue: deque[tuple[int, int]] = deque()
+        for (col, row) in self._room_visible_tiles():
+            if 0 <= col < cols and 0 <= row < rows:
+                dist[row][col] = 0
+                queue.append((col, row))
+        while queue:
+            col, row = queue.popleft()
+            for dc in (-1, 0, 1):
+                for dr in (-1, 0, 1):
+                    if dc == 0 and dr == 0:
+                        continue
+                    nc, nr = col + dc, row + dr
+                    if (
+                        0 <= nc < cols
+                        and 0 <= nr < rows
+                        and dist[nr][nc] > dist[row][col] + 1
+                    ):
+                        dist[nr][nc] = dist[row][col] + 1
+                        queue.append((nc, nr))
+
+        target = np.zeros((rows, cols), dtype=np.float32)
+        for row in range(rows):
+            for col in range(cols):
+                tile_dist = dist[row][col]
+                if tile_dist == 0:
+                    level = 1.0
+                elif tile_dist < fade_tiles:
+                    level = max(0.0, 1.0 - tile_dist / fade_tiles)
+                else:
+                    level = 0.0
+                target[row, col] = level * (1.0 - room_dim)
+        return target
+
+    def _update_room_light(self, delta_time: float) -> None:
+        if not self.room_mode:
+            return
+        target = self._room_light_targets()
+        current = self._room_light_current
+        if current is None or current.shape != target.shape:
+            self._room_light_current = target
+            self._room_light_version += 1
+            return
+        difference = float(np.abs(target - current).mean())
+        if difference <= 1e-4:
+            return
+        rate = ROOM_LIGHT_TRANSITION_SPEED * (
+            1.0 + ROOM_LIGHT_DIFF_BOOST * difference
+        )
+        factor = 1.0 - math.exp(-rate * max(0.0, delta_time))
+        current += (target - current) * factor
+        self._room_light_version += 1
+
     def debug_log_move(self) -> None:
         tile_width = self.game_map.tilemap.tile_width
         tile_height = self.game_map.tilemap.tile_height
@@ -1076,6 +1141,8 @@ class GameWindow(arcade.Window):
                 "rooms",
                 visible_rooms,
                 frozenset(visible_tiles),
+                self._room_light_version,
+                self._player_light_origin(),
             )
         else:
             key = (
@@ -1101,65 +1168,39 @@ class GameWindow(arcade.Window):
                 tex_rows, dtype=np.float32
             ) * step + np.float32(bottom + step / 2)
             if self.room_mode:
-                cols = int(self.game_map.tilemap.width)
-                rows = int(self.game_map.tilemap.height)
-                fade_tiles = 5
-                INF = 10 ** 9
-                dist = [[INF] * cols for _ in range(rows)]
-                from collections import deque
-
-                queue: deque[tuple[int, int]] = deque()
-                for (col, row) in visible_tiles:
-                    if 0 <= col < cols and 0 <= row < rows:
-                        dist[row][col] = 0
-                        queue.append((col, row))
-                while queue:
-                    col, row = queue.popleft()
-                    for dc in (-1, 0, 1):
-                        for dr in (-1, 0, 1):
-                            if dc == 0 and dr == 0:
-                                continue
-                            nc, nr = col + dc, row + dr
-                            if (
-                                0 <= nc < cols
-                                and 0 <= nr < rows
-                                and dist[nr][nc] > dist[row][col] + 1
-                            ):
-                                dist[nr][nc] = dist[row][col] + 1
-                                queue.append((nc, nr))
-
+                room_light = self._room_light_current
+                tile_cols = int(self.game_map.tilemap.width)
+                tile_rows = int(self.game_map.tilemap.height)
+                if (
+                    room_light is None
+                    or room_light.shape != (tile_rows, tile_cols)
+                ):
+                    room_light = self._room_light_targets()
+                    self._room_light_current = room_light
                 light = np.zeros(
                     (tex_rows, tex_cols), dtype=np.float32
                 )
                 player_x = self.player.center_x
                 player_y = self.player.center_y
                 player_light_radius = 2.0 * tile_width
-                player_light_peak = 0.35
-                room_dim = 0.12
+                player_light_peak = 0.25
+                radius_sq = player_light_radius ** 2
                 for iy in range(tex_rows):
                     for ix in range(tex_cols):
                         col = int(xs[ix] // tile_width)
                         row = int(ys[iy] // tile_height)
-                        if 0 <= col < cols and 0 <= row < rows:
-                            tile_dist = dist[row][col]
-                            if tile_dist == 0:
-                                level = 1.0
-                            elif tile_dist < fade_tiles:
-                                level = max(
-                                    0.0, 1.0 - tile_dist / fade_tiles
-                                )
-                            else:
-                                level = 0.0
-                            level *= 1.0 - room_dim
-                            dx = xs[ix] - player_x
-                            dy = ys[iy] - player_y
-                            pd2 = dx * dx + dy * dy
-                            radius_sq = player_light_radius ** 2
-                            if pd2 < radius_sq:
-                                level += player_light_peak * (
-                                    1.0 - math.sqrt(pd2) / player_light_radius
-                                )
-                            light[iy, ix] = min(1.0, level)
+                        level = 0.0
+                        if 0 <= col < tile_cols and 0 <= row < tile_rows:
+                            level = float(room_light[row, col])
+                        dx = xs[ix] - player_x
+                        dy = ys[iy] - player_y
+                        pd2 = dx * dx + dy * dy
+                        if pd2 < radius_sq:
+                            level += player_light_peak * (
+                                1.0
+                                - math.sqrt(pd2) / player_light_radius
+                            )
+                        light[iy, ix] = min(1.0, level)
                 glow = np.zeros_like(light)
             else:
                 light = self._light_values(
@@ -1632,6 +1673,8 @@ class GameWindow(arcade.Window):
     def on_update(self, delta_time: float) -> None:
         if self.currentScreen in ("menu", "won"):
             return
+
+        self._update_room_light(delta_time)
 
         if self.transition_active:
             self.update_transition(delta_time)
