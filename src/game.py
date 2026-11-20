@@ -46,6 +46,31 @@ class AttackEffect:
         )
 
 
+@dataclass
+class DamageNumber:
+    text: arcade.Text
+    x: float
+    y: float
+    timer: float = DAMAGE_NUMBER_LIFETIME
+
+    def update(self, delta_time: float) -> bool:
+        self.timer -= delta_time
+        self.y += DAMAGE_NUMBER_RISE * delta_time
+        progress = max(0.0, self.timer / DAMAGE_NUMBER_LIFETIME)
+        self.text.color = (
+            255,
+            int(60 + 80 * progress),
+            int(60 + 80 * progress),
+            int(255 * min(1.0, progress * 2)),
+        )
+        return self.timer > 0
+
+    def draw(self) -> None:
+        self.text.x = self.x
+        self.text.y = self.y
+        self.text.draw()
+
+
 class GameWindow(arcade.Window):
     def __init__(
         self,
@@ -72,6 +97,10 @@ class GameWindow(arcade.Window):
         self.camera = CameraController(self.width, self.height)
         self.menu = MainMenu(self.width, self.height, ASSETS_DIR)
         self.currentScreen = "menu"
+        self.unsaved = False
+        self.close_prompt = False
+        self.death_timer: float | None = None
+        self.damage_numbers: list[DamageNumber] = []
         self.keys: set[int] = set()
         self.stat_top = 0
         self.stat_bottom = 0
@@ -291,6 +320,9 @@ class GameWindow(arcade.Window):
     def start_game(self) -> None:
         self.load_map(self.start_map_index)
         self.player.reset()
+        self.death_timer = None
+        self.damage_numbers.clear()
+        self.unsaved = True
         self.won = False
         self.gold = STARTING_GOLD
         self._seed_inventory()
@@ -361,17 +393,22 @@ class GameWindow(arcade.Window):
         self.keys.clear()
 
     def save_game(self) -> None:
-        save.save_state(SAVE_PATH, self._build_save_state())
-        self.menu.status = "Game saved."
+        slot = self.menu.slot
+        save.save_state(save_slot_path(slot), self._build_save_state())
+        self.menu.status = f"Game saved to slot {slot}."
+        self.unsaved = False
         self.menu.can_resume = True
 
     def load_game(self) -> None:
-        state = load_state(SAVE_PATH)
+        slot = self.menu.slot
+        state = load_state(save_slot_path(slot))
         if state is None:
-            self.menu.status = "No saved game found."
+            self.menu.status = f"No save in slot {slot}."
             return
 
         self._apply_save_state(state)
+        self.unsaved = False
+        self.menu.status = f"Loaded slot {slot}."
         self.update_health()
         self.camera.follow(self.player.center_x, self.player.center_y)
         if self.won:
@@ -447,6 +484,8 @@ class GameWindow(arcade.Window):
 
     def _enter_game(self) -> None:
         self.currentScreen = "game"
+        if not self.player.dead:
+            self.death_timer = None
         self.menu.can_resume = True
         self.keys.clear()
 
@@ -1063,6 +1102,7 @@ class GameWindow(arcade.Window):
         self._room_light_version += 1
 
     def debug_log_move(self) -> None:
+        self.unsaved = True
         tile_width = self.game_map.tilemap.tile_width
         tile_height = self.game_map.tilemap.tile_height
         tile_col = int(self.player.center_x // tile_width)
@@ -1278,6 +1318,11 @@ class GameWindow(arcade.Window):
             self.draw_win_screen()
             return
 
+        if self.currentScreen == "dead":
+            self.camera.use_gui()
+            self.draw_death_screen()
+            return
+
         self.camera.use_world()
         self.game_map.draw(pixelated=True)
         if self.room_mode and not self.disable_fog_of_war:
@@ -1305,6 +1350,9 @@ class GameWindow(arcade.Window):
         if self.room_mode:
             self.player_list.draw(pixelated=True)
 
+        for number in self.damage_numbers:
+            number.draw()
+
         self.camera.use_gui()
         self.heart_list.draw(pixelated=True)
         self.draw_combat_hud()
@@ -1312,6 +1360,9 @@ class GameWindow(arcade.Window):
         self.dialogue.draw()
         self.options.draw()
         self.draw_transition()
+
+        if self.close_prompt:
+            self.draw_close_prompt()
 
     @property
     def box_is_open(self) -> bool:
@@ -1471,6 +1522,62 @@ class GameWindow(arcade.Window):
             anchor_y="center",
         )
 
+    def draw_death_screen(self) -> None:
+        arcade.draw_lrbt_rectangle_filled(
+            0,
+            self.width,
+            0,
+            self.height,
+            WINDOW_BACKGROUND,
+        )
+        arcade.draw_text(
+            DEATH_TITLE,
+            self.width / 2,
+            self.height / 2 + 70,
+            STAT_TEXT_COLOR,
+            font_size=DEATH_FONT_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+        arcade.draw_text(
+            DEATH_MESSAGE,
+            self.width / 2,
+            self.height / 2 + 18,
+            STAT_TEXT_COLOR,
+            font_size=DEATH_MESSAGE_FONT_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+        arcade.draw_text(
+            DEATH_HINT,
+            self.width / 2,
+            self.height / 2 - 32,
+            MENU_MUTED_TEXT,
+            font_size=DEATH_HINT_FONT_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+
+    def spawn_damage_number(self, amount: int) -> None:
+        if amount <= 0:
+            return
+        x = self.player.center_x
+        y = self.player.center_y + 20
+        text = arcade.Text(
+            f"-{amount}",
+            x,
+            y,
+            (255, 70, 70, 255),
+            font_size=DAMAGE_NUMBER_FONT_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+        self.damage_numbers.append(DamageNumber(text, x, y))
+
     def update_health(self) -> None:
         for index, heart in enumerate(self.heart_list):
             heart.texture = (
@@ -1568,6 +1675,7 @@ class GameWindow(arcade.Window):
             self.inventory_screen.close()
             self.keys.clear()
         elif isinstance(action, ConfirmResult):
+            self.unsaved = True
             if action.action == "consume":
                 self.player.heal(action.heal)
                 self.update_health()
@@ -1586,13 +1694,98 @@ class GameWindow(arcade.Window):
             self.save_game()
         elif action == "load":
             self.load_game()
+        elif action == "save_slot":
+            self.save_game()
+            self.menu.slot_screen = None
+        elif action == "load_slot":
+            state = load_state(save_slot_path(self.menu.slot))
+            if state is None:
+                self.menu.status = f"No save in slot {self.menu.slot}."
+            else:
+                self.load_game()
+                self.menu.slot_screen = None
+
+    def on_close(self) -> None:
+        if self.close_prompt:
+            super().on_close()
+            return
+        if self.currentScreen == "game" and self.unsaved:
+            self.close_prompt = True
+            return
+        super().on_close()
+
+    def draw_close_prompt(self) -> None:
+        arcade.draw_lrbt_rectangle_filled(
+            0,
+            self.width,
+            0,
+            self.height,
+            INV_DIM_COLOR,
+        )
+        box_width = min(self.width - 80, 520)
+        box_height = 170
+        left = (self.width - box_width) / 2
+        bottom = (self.height - box_height) / 2
+        arcade.draw_lrbt_rectangle_filled(
+            left,
+            left + box_width,
+            bottom,
+            bottom + box_height,
+            PANEL_COLOR,
+        )
+        arcade.draw_lrbt_rectangle_outline(
+            left,
+            left + box_width,
+            bottom,
+            bottom + box_height,
+            INV_BORDER_COLOR,
+            2,
+        )
+        arcade.draw_text(
+            "UNSAVED CHANGES",
+            self.width / 2,
+            bottom + box_height - 38,
+            INV_ACCENT_COLOR,
+            font_size=INV_TITLE_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+        arcade.draw_text(
+            "Quit without saving?",
+            self.width / 2,
+            bottom + box_height - 78,
+            TEXT_COLOR,
+            font_size=LABEL_SIZE + 2,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+        arcade.draw_text(
+            "Y / ENTER - quit       N / ESC - stay",
+            self.width / 2,
+            bottom + 40,
+            MENU_MUTED_TEXT,
+            font_size=LABEL_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
 
     def on_key_press(self, symbol, modifiers) -> None:
+        if self.close_prompt:
+            if symbol in (arcade.key.Y, arcade.key.ENTER, arcade.key.SPACE):
+                self.close_prompt = False
+                super().on_close()
+            elif symbol in (arcade.key.N, arcade.key.ESCAPE):
+                self.close_prompt = False
+            return
+
         if self.currentScreen == "menu":
             self._run_menu_action(self.menu.handle_key(symbol))
             return
 
-        if self.currentScreen == "won":
+        if self.currentScreen in ("won", "dead"):
             if symbol in (arcade.key.ENTER, arcade.key.SPACE, arcade.key.ESCAPE):
                 self.currentScreen = "menu"
                 self.menu.can_resume = False
@@ -1671,7 +1864,16 @@ class GameWindow(arcade.Window):
             self._run_menu_action(self.menu.handle_click(x, y, button))
 
     def on_update(self, delta_time: float) -> None:
-        if self.currentScreen in ("menu", "won"):
+        if self.currentScreen in ("menu", "won", "dead"):
+            return
+
+        if self.currentScreen == "game" and self.player.dead:
+            if self.death_timer is None:
+                self.death_timer = 0.0
+            self.death_timer += delta_time
+            self.player.update_death_animation(delta_time)
+            if self.death_timer >= DEATH_SCREEN_DELAY:
+                self.currentScreen = "dead"
             return
 
         self._update_room_light(delta_time)
@@ -1687,6 +1889,11 @@ class GameWindow(arcade.Window):
             effect
             for effect in self.attack_effects
             if effect.update(delta_time)
+        ]
+        self.damage_numbers = [
+            number
+            for number in self.damage_numbers
+            if number.update(delta_time)
         ]
 
         if self.box_is_open:
@@ -1750,7 +1957,8 @@ class GameWindow(arcade.Window):
         enemy_damage = self.enemies.contact_damage(self.player)
         if enemy_damage and self.enemy_damage_timer <= 0:
             _, defense = get_combat_stats(self.equipment)
-            self.player.takeDamage(enemy_damage, defense)
+            dealt = self.player.takeDamage(enemy_damage, defense)
+            self.spawn_damage_number(dealt)
             self.enemy_damage_timer = self.enemy_damage_cooldown
             self.update_health()
         elif not enemy_damage:
@@ -1763,13 +1971,13 @@ class GameWindow(arcade.Window):
 
         self.spike_damage_timer -= delta_time
 
-        touching_spikes = arcade.check_for_collision_with_list(
-            self.player,
+        touching_spikes = self.player.collision_with(
             self.game_map.spikes,
         )
         if touching_spikes and self.spike_damage_timer <= 0:
             _, defense = get_combat_stats(self.equipment)
-            self.player.takeDamage(10, defense)
+            dealt = self.player.takeDamage(10, defense)
+            self.spawn_damage_number(dealt)
             self.spike_damage_timer = self.spike_damage_cooldown
             self.update_health()
         elif not touching_spikes:

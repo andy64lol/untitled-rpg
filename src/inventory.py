@@ -229,6 +229,8 @@ class EquipmentPanel:
             width=self.panel_width - PANEL_PADDING * 2,
             anchor_x="left",
             anchor_y="center",
+            multiline=True,
+            align="left",
         )
         self.refresh()
 
@@ -281,19 +283,49 @@ class EquipmentPanel:
             self.top,
             PANEL_COLOR,
         )
+        arcade.draw_lrbt_rectangle_outline(
+            self.left,
+            self.left + self.panel_width,
+            self.bottom,
+            self.top,
+            INV_BORDER_COLOR,
+            2,
+        )
+        arcade.draw_lrbt_rectangle_filled(
+            self.left,
+            self.left + self.panel_width,
+            self.top - PANEL_PADDING,
+            self.top,
+            INV_HEADER_COLOR,
+        )
+        arcade.draw_text(
+            INV_EQUIP_TITLE,
+            self.left + PANEL_PADDING / 2,
+            self.top - PANEL_PADDING / 2,
+            INV_ACCENT_COLOR,
+            font_size=INV_HEADER_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="left",
+            anchor_y="center",
+        )
 
         for index, (slot_left, right, bottom, top) in enumerate(self.highlights):
-            color = (
-                SLOT_SELECTED_COLOR
-                if focused and index == self.index
-                else EQUIPMENT_SLOT_BG
-            )
+            selected = focused and index == self.index
+            color = SLOT_SELECTED_COLOR if selected else EQUIPMENT_SLOT_BG
             arcade.draw_lrbt_rectangle_filled(
                 slot_left,
                 right,
                 bottom,
                 top,
                 color,
+            )
+            arcade.draw_lrbt_rectangle_outline(
+                slot_left,
+                right,
+                bottom,
+                top,
+                INV_SELECTED_BORDER if selected else INV_SLOT_BORDER,
+                2 if selected else 1,
             )
 
         self.slot_icons.draw(pixelated=True)
@@ -393,6 +425,8 @@ class InventoryPanel:
             width=self.panel_width - PANEL_PADDING * 2,
             anchor_x="left",
             anchor_y="center",
+            multiline=True,
+            align="left",
         )
         self.gold_label = arcade.Text(
             "",
@@ -449,15 +483,37 @@ class InventoryPanel:
             self.top,
             PANEL_COLOR,
         )
+        arcade.draw_lrbt_rectangle_outline(
+            self.left,
+            self.left + self.panel_width,
+            self.bottom,
+            self.top,
+            INV_BORDER_COLOR,
+            2,
+        )
+        arcade.draw_lrbt_rectangle_filled(
+            self.left,
+            self.left + self.panel_width,
+            self.top - PANEL_PADDING,
+            self.top,
+            INV_HEADER_COLOR,
+        )
+        arcade.draw_text(
+            INV_ITEMS_TITLE,
+            self.left + PANEL_PADDING / 2,
+            self.top - PANEL_PADDING / 2,
+            INV_ACCENT_COLOR,
+            font_size=INV_HEADER_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="left",
+            anchor_y="center",
+        )
 
         for index in range(len(self.inventory.slots)):
             slot_left = self._slot_left(index % COLUMNS)
             bottom = self._slot_bottom(index // COLUMNS)
-            color = (
-                SLOT_SELECTED_COLOR
-                if focused and index == self.index
-                else SLOT_COLOR
-            )
+            selected = focused and index == self.index
+            color = SLOT_SELECTED_COLOR if selected else SLOT_COLOR
 
             arcade.draw_lrbt_rectangle_filled(
                 slot_left,
@@ -466,11 +522,20 @@ class InventoryPanel:
                 bottom + SLOT_SIZE,
                 color,
             )
+            arcade.draw_lrbt_rectangle_outline(
+                slot_left,
+                slot_left + SLOT_SIZE,
+                bottom,
+                bottom + SLOT_SIZE,
+                INV_SELECTED_BORDER if selected else INV_SLOT_BORDER,
+                2 if selected else 1,
+            )
 
         for count in self.counts:
             count.draw()
 
         self.icons.draw(pixelated=True)
+        self.gold_label.color = INV_ACCENT_COLOR
         self.gold_label.draw()
         self.label.draw()
 
@@ -537,6 +602,8 @@ class InventoryScreen:
         self.equipment = equipment or Equipment()
         self.is_open = False
         self.focus = "inventory"
+        self.width = width
+        self.height = height
 
         combined_left, combined_top, equipment_width = self._layout(width, height)
         self.equipment_panel = EquipmentPanel(
@@ -548,6 +615,18 @@ class InventoryScreen:
             combined_left + equipment_width + PANEL_GAP,
             combined_top,
             self.inventory,
+        )
+        self._update_bounds()
+
+    def _update_bounds(self) -> None:
+        self.bounds = (
+            self.equipment_panel.left,
+            min(
+                self.equipment_panel.bottom,
+                self.inventory_panel.bottom,
+            ),
+            self.inventory_panel.left + self.inventory_panel.panel_width,
+            self.equipment_panel.top,
         )
 
     @staticmethod
@@ -579,12 +658,15 @@ class InventoryScreen:
         return combined_left, combined_top, equipment_width
 
     def resize(self, width: int, height: int) -> None:
+        self.width = width
+        self.height = height
         combined_left, combined_top, equipment_width = self._layout(width, height)
         self.equipment_panel.set_position(combined_left, combined_top)
         self.inventory_panel.set_position(
             combined_left + equipment_width + PANEL_GAP,
             combined_top,
         )
+        self._update_bounds()
 
     def toggle(self) -> None:
         self.is_open = not self.is_open
@@ -670,6 +752,40 @@ class InventoryScreen:
     def draw(self) -> None:
         if not self.is_open:
             return
+
+        left, bottom, right, top = self.bounds
+        arcade.draw_lrbt_rectangle_filled(
+            0,
+            self.width,
+            0,
+            self.height,
+            INV_DIM_COLOR,
+        )
+        arcade.draw_lrbt_rectangle_filled(
+            left - PANEL_GAP / 2,
+            right + PANEL_GAP / 2,
+            bottom - PANEL_GAP / 2,
+            top + PANEL_GAP / 2 + INV_TITLE_SIZE,
+            PANEL_COLOR,
+        )
+        arcade.draw_lrbt_rectangle_outline(
+            left - PANEL_GAP / 2,
+            right + PANEL_GAP / 2,
+            bottom - PANEL_GAP / 2,
+            top + PANEL_GAP / 2 + INV_TITLE_SIZE,
+            INV_BORDER_COLOR,
+            2,
+        )
+        arcade.draw_text(
+            INV_TITLE,
+            (left + right) / 2,
+            top + PANEL_GAP / 2 + INV_TITLE_SIZE / 2,
+            INV_ACCENT_COLOR,
+            font_size=INV_TITLE_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
 
         self.equipment_panel.draw(self.focus == "equipment")
         self.inventory_panel.draw(self.focus == "inventory")

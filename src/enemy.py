@@ -1,4 +1,5 @@
 import json
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -61,6 +62,35 @@ class Enemy(arcade.Sprite):
         self.target_x = center_x
         self.target_y = center_y
         self.moving = False
+        self.swing_phase = 0.0
+        self.flip_timer = 0.0
+        self.flip_from = 1.0
+        self.flip_to = 1.0
+        self.facing_x = 1
+
+    def _update_motion_animation(self, delta_time: float) -> None:
+        swing_target = 0.0
+        if self.moving:
+            swing_sign = -1.0 if self.facing_x < 0 else 1.0
+            swing_target = (
+                SWING_ANGLE_DEGREES
+                * swing_sign
+                * (0.75 + 0.25 * math.sin(self.swing_phase))
+            )
+            self.swing_phase += delta_time * SWING_SPEED
+        ease = min(1.0, delta_time * SWING_EASE)
+        self.angle += (swing_target - self.angle) * ease
+        if abs(self.angle) < 0.01:
+            self.angle = 0.0
+
+        if self.flip_timer > 0.0:
+            self.flip_timer = max(0.0, self.flip_timer - delta_time)
+            progress = 1.0 - self.flip_timer / FLIP_DURATION
+            self.scale_x = self.flip_from + (
+                self.flip_to - self.flip_from
+            ) * progress
+            if self.flip_timer == 0.0:
+                self.scale_x = self.flip_to
 
     def update_animation(self, delta_time: float = 1 / 60, *args) -> None:
         self.frame_timer += delta_time
@@ -75,8 +105,18 @@ class Enemy(arcade.Sprite):
         self.target_x = center_x
         self.target_y = center_y
         self.moving = True
+        direction_x = center_x - self.center_x
+        if direction_x != 0:
+            facing = 1 if direction_x > 0 else -1
+            if facing != self.facing_x:
+                self.flip_from = self.scale_x
+                self.flip_to = float(facing)
+                self.flip_timer = FLIP_DURATION
+                self.facing_x = facing
+                self.swing_phase = 0.0
 
     def update_movement(self, delta_time: float) -> None:
+        self._update_motion_animation(delta_time)
         if not self.moving:
             return
 
@@ -121,7 +161,7 @@ class EnemyManager:
         self.spawned.clear()
 
     def spawn(self, enemy_id: str, center_x: float, center_y: float) -> None:
-        kind = ENEMIES.get(enemy_id)
+        kind = ENEMIES.get(enemy_id) or ENEMIES.get(DEFAULT_ENEMY_ID)
         if kind is None:
             return
 
@@ -149,7 +189,7 @@ class EnemyManager:
             enemy = Enemy(kind, center_x, center_y)
             if self._is_blocked(enemy, center_x, center_y):
                 continue
-            if arcade.check_for_collision(enemy, player):
+            if player.collides_with(enemy):
                 continue
 
             self.enemies.append(enemy)
@@ -207,9 +247,8 @@ class EnemyManager:
         return max(
             (
                 enemy.kind.damage
-                for enemy in arcade.check_for_collision_with_list(
-                    player, self.enemies
-                )
+                for enemy in player.collision_with(self.enemies)
+                if isinstance(enemy, Enemy)
             ),
             default=0,
         )
@@ -274,7 +313,13 @@ class EnemyManager:
     def _is_blocked(self, enemy: Enemy, x: float, y: float) -> bool:
         old_x = enemy.center_x
         old_y = enemy.center_y
+        old_angle = enemy.angle
+        old_scale_x = enemy.scale_x
+        old_scale_y = enemy.scale_y
 
+        enemy.angle = 0.0
+        enemy.scale_x = 1.0
+        enemy.scale_y = 1.0
         enemy.center_x = x
         enemy.center_y = y
         blocked = bool(
@@ -283,5 +328,8 @@ class EnemyManager:
 
         enemy.center_x = old_x
         enemy.center_y = old_y
+        enemy.angle = old_angle
+        enemy.scale_x = old_scale_x
+        enemy.scale_y = old_scale_y
 
         return blocked

@@ -1,3 +1,4 @@
+import math
 from typing import Any
 
 import arcade
@@ -67,6 +68,10 @@ class Player(arcade.Sprite):
         self.debug = PLAYER_DEBUG
         self.debugInterval = PLAYER_DEBUG_INTERVAL
         self.debugTimer = 0
+        self.swing_phase = 0.0
+        self.flip_timer = 0.0
+        self.death_anim_time = 0.0
+        self.damage_flash_timer = 0.0
 
     def updateTexture(self):
         if self.direction == "left":
@@ -92,11 +97,24 @@ class Player(arcade.Sprite):
         self.dead = False
         self.facing = "right"
         self.direction = "right"
+        self.death_anim_time = 0.0
+        self.angle = 0.0
+        self.scale_x = 1.0
+        self.scale_y = 1.0
+        self.alpha = 255
+        self.flip_timer = 0.0
+        self.damage_flash_timer = 0.0
+        self.color = (255, 255, 255)
         self._placeAt(self.spawnX, self.spawnY)
 
     def set_facing(self, facing: str) -> None:
+        if self.dead:
+            return
         self.facing = facing
         if facing in ("left", "right"):
+            if facing != self.direction:
+                self.flip_timer = FLIP_DURATION
+                self.swing_phase = 0.0
             self.direction = facing
         self.updateTexture()
 
@@ -104,6 +122,52 @@ class Player(arcade.Sprite):
         facing = KEY_TO_FACING.get(key)
         if facing is not None:
             self.set_facing(facing)
+
+    def _update_motion_animation(self, delta_time: float) -> None:
+        swing_target = 0.0
+        if self.moving and not self.dead:
+            swing_sign = -1.0 if self.direction == "left" else 1.0
+            swing_target = (
+                SWING_ANGLE_DEGREES
+                * swing_sign
+                * (0.75 + 0.25 * math.sin(self.swing_phase))
+            )
+            self.swing_phase += delta_time * SWING_SPEED
+        ease = min(1.0, delta_time * SWING_EASE)
+        self.angle += (swing_target - self.angle) * ease
+        if abs(self.angle) < 0.01:
+            self.angle = 0.0
+
+        if self.flip_timer > 0.0:
+            self.flip_timer = max(0.0, self.flip_timer - delta_time)
+            progress = 1.0 - self.flip_timer / FLIP_DURATION
+            self.scale_x = abs(math.cos(math.pi * progress))
+            if self.flip_timer == 0.0:
+                self.scale_x = 1.0
+
+        if self.dead:
+            self.color = (255, 255, 255)
+            return
+        if self.damage_flash_timer > 0.0:
+            self.damage_flash_timer = max(
+                0.0, self.damage_flash_timer - delta_time
+            )
+            progress = self.damage_flash_timer / DAMAGE_FLASH_DURATION
+            self.color = DAMAGE_FLASH_COLOR
+            self.scale_y = 1.0 - 0.12 * progress
+        else:
+            self.color = (255, 255, 255)
+            self.scale_y = 1.0
+
+    def update_death_animation(self, delta_time: float) -> None:
+        if not self.dead:
+            return
+        self.death_anim_time += delta_time
+        progress = min(1.0, self.death_anim_time / DEATH_ANIMATION_DURATION)
+        self.scale_x = 1.0 + 0.12 * math.sin(math.pi * progress)
+        self.scale_y = 1.0 - 0.32 * progress
+        self.alpha = int(255 - 90 * progress)
+        self.angle = 0.0
 
     def get_attack_position(self) -> tuple[float, float]:
         offset_x, offset_y = FACING_OFFSETS[self.facing]
@@ -135,19 +199,28 @@ class Player(arcade.Sprite):
         self.just_finished_move = False
         self.updateTexture()
 
-    def takeDamage(self, damage, defense: int = 0):
+    def takeDamage(self, damage, defense: int = 0) -> int:
         if self.dead or self.invincible:
-            return
+            return 0
 
         actual_damage = max(0, damage - defense)
         self.hp -= actual_damage
+        if actual_damage > 0:
+            self.damage_flash_timer = DAMAGE_FLASH_DURATION
 
         if self.hp <= 0:
             self.hp = 0
             self.dead = True
             self.moving = False
+            self.death_anim_time = 0.0
+            self.angle = 0.0
+            self.flip_timer = 0.0
+            self.scale_x = 1.0
+            self.scale_y = 1.0
+            self.alpha = 255
 
         self.updateTexture()
+        return actual_damage
 
     def bumpedFountain(self, collision) -> bool:
         return any(
@@ -162,17 +235,41 @@ class Player(arcade.Sprite):
         self.hp = min(self.hp + amount, self.maxHp)
         self.updateTexture()
 
+    def collision_with(
+        self, sprites: arcade.SpriteList
+    ) -> list[arcade.Sprite]:
+        old_angle = self.angle
+        old_scale_x = self.scale_x
+        old_scale_y = self.scale_y
+        self.angle = 0.0
+        self.scale_x = 1.0
+        self.scale_y = 1.0
+        collision = arcade.check_for_collision_with_list(self, sprites)
+        self.angle = old_angle
+        self.scale_x = old_scale_x
+        self.scale_y = old_scale_y
+        return collision
+
+    def collides_with(self, other: arcade.Sprite) -> bool:
+        old_angle = self.angle
+        old_scale_x = self.scale_x
+        old_scale_y = self.scale_y
+        self.angle = 0.0
+        self.scale_x = 1.0
+        self.scale_y = 1.0
+        collision = arcade.check_for_collision(self, other)
+        self.angle = old_angle
+        self.scale_x = old_scale_x
+        self.scale_y = old_scale_y
+        return collision
+
     def checkCollision(self, targetX, targetY):
         oldX = self.center_x
         oldY = self.center_y
 
         self.center_x = targetX
         self.center_y = targetY
-
-        collision = arcade.check_for_collision_with_list(
-            self,
-            self.collisionList,
-        )
+        collision = self.collision_with(self.collisionList)
 
         self.center_x = oldX
         self.center_y = oldY
@@ -182,6 +279,7 @@ class Player(arcade.Sprite):
     def updatePlayer(self, keys, delta_time) -> bool:
         self.just_finished_move = False
         self.lastCollision = []
+        self._update_motion_animation(delta_time)
 
         if self.moving and self.debug:
             self.debugTimer += delta_time

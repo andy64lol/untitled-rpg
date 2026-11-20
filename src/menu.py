@@ -3,6 +3,7 @@ from pathlib import Path
 import arcade
 
 from config import *
+from load import load_state
 
 
 class MenuButton(arcade.Sprite):
@@ -37,6 +38,8 @@ class MainMenu:
         self.mouse_y = height / 2
         self.can_resume = False
         self.status = ""
+        self.slot = 1
+        self.slot_screen: str | None = None
 
         title_texture = arcade.load_texture(str(TITLE_PATH))
         title_sprite = arcade.Sprite(title_texture, scale=TITLE_SCALE, pixelated=True)
@@ -154,7 +157,68 @@ class MainMenu:
                 button.hover_texture if button is hovered else button.normal_texture
             )
 
+    def change_slot(self, delta: int) -> None:
+        self.slot = (self.slot - 1 + delta) % SAVE_SLOTS + 1
+        self.status = ""
+
+    def open_slot_screen(self, mode: str) -> None:
+        self.slot_screen = mode
+        self.status = ""
+
+    def _slot_layout(self) -> tuple[float, float, list[float]]:
+        rows_height = SAVE_SLOTS * SLOT_MENU_ROW_HEIGHT
+        rows_top = self.height / 2 + rows_height / 2
+        top = rows_top + SLOT_MENU_TITLE_SIZE * 2
+        left = (self.width - SLOT_MENU_WIDTH) / 2
+        first_center = rows_top - SLOT_MENU_ROW_HEIGHT / 2
+        centers = [
+            first_center - i * SLOT_MENU_ROW_HEIGHT
+            for i in range(SAVE_SLOTS)
+        ]
+        return left, top, centers
+
+    def _slot_at(self, y: float) -> int | None:
+        _, _, centers = self._slot_layout()
+        for index, center_y in enumerate(centers):
+            if abs(y - center_y) <= SLOT_MENU_ROW_HEIGHT / 2:
+                return index + 1
+        return None
+
+    def _slot_action(self) -> str:
+        return f"{self.slot_screen}_slot"
+
     def handle_key(self, symbol: int) -> str | None:
+        if self.slot_screen is not None:
+            if arcade.key.KEY_1 <= symbol <= arcade.key.KEY_9:
+                slot = symbol - arcade.key.KEY_1 + 1
+                if slot <= SAVE_SLOTS:
+                    self.slot = slot
+                return None
+            if symbol in (arcade.key.UP, arcade.key.W):
+                self.change_slot(-1)
+                return None
+            if symbol in (arcade.key.DOWN, arcade.key.S):
+                self.change_slot(1)
+                return None
+            if symbol in (arcade.key.ENTER, arcade.key.SPACE):
+                return self._slot_action()
+            if symbol == arcade.key.ESCAPE:
+                self.slot_screen = None
+                return None
+            return None
+
+        if arcade.key.KEY_1 <= symbol <= arcade.key.KEY_9:
+            slot = symbol - arcade.key.KEY_1 + 1
+            if slot <= SAVE_SLOTS:
+                self.slot = slot
+                self.status = ""
+                return None
+        if symbol == arcade.key.LEFT:
+            self.change_slot(-1)
+            return None
+        if symbol == arcade.key.RIGHT:
+            self.change_slot(1)
+            return None
         if symbol in (arcade.key.ENTER, arcade.key.SPACE):
             return "resume" if self.can_resume else "start"
         return None
@@ -164,18 +228,128 @@ class MainMenu:
             return None
 
         self.update_mouse(x, y)
+
+        if self.slot_screen is not None:
+            slot = self._slot_at(y)
+            if slot is not None:
+                self.slot = slot
+                return self._slot_action()
+            self.slot_screen = None
+            return None
+
         hovered = self._hovered_button()
         if hovered is None:
             return None
 
+        if hovered.action in ("load", "save"):
+            self.open_slot_screen(hovered.action)
+            return None
         if hovered.action == "start" and self.can_resume:
             return "resume"
         return hovered.action
+
+    def _draw_slot_screen(self) -> None:
+        left, top, centers = self._slot_layout()
+        right = left + SLOT_MENU_WIDTH
+        bottom = centers[-1] - SLOT_MENU_ROW_HEIGHT / 2
+        title = (
+            SLOT_LOAD_TITLE
+            if self.slot_screen == "load"
+            else SLOT_SAVE_TITLE
+        )
+
+        arcade.draw_lrbt_rectangle_filled(
+            left - 20,
+            right + 20,
+            bottom - 50,
+            top + 20,
+            PANEL_COLOR,
+        )
+        arcade.draw_lrbt_rectangle_outline(
+            left - 20,
+            right + 20,
+            bottom - 50,
+            top + 20,
+            INV_BORDER_COLOR,
+            2,
+        )
+        arcade.draw_text(
+            title,
+            self.width / 2,
+            top - SLOT_MENU_TITLE_SIZE,
+            INV_ACCENT_COLOR,
+            font_size=SLOT_MENU_TITLE_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+
+        for index, center_y in enumerate(centers):
+            slot = index + 1
+            row_bottom = center_y - SLOT_MENU_ROW_HEIGHT / 2
+            selected = slot == self.slot
+            arcade.draw_lrbt_rectangle_filled(
+                left,
+                right,
+                row_bottom,
+                row_bottom + SLOT_MENU_ROW_HEIGHT,
+                SLOT_SELECTED_COLOR if selected else SLOT_COLOR,
+            )
+            arcade.draw_lrbt_rectangle_outline(
+                left,
+                right,
+                row_bottom,
+                row_bottom + SLOT_MENU_ROW_HEIGHT,
+                INV_SELECTED_BORDER if selected else INV_SLOT_BORDER,
+                2 if selected else 1,
+            )
+
+            state = load_state(save_slot_path(slot))
+            if state is None:
+                detail = "EMPTY"
+            else:
+                detail = f"{state.get('map', 'unknown')}  -  {state.get('gold', 0)}g"
+            arcade.draw_text(
+                f"SLOT {slot}   {detail}",
+                left + 16,
+                center_y,
+                INV_ACCENT_COLOR if selected else TEXT_COLOR,
+                font_size=SLOT_MENU_ROW_SIZE,
+                font_name=FONT_NAME,
+                anchor_x="left",
+                anchor_y="center",
+            )
+
+        arcade.draw_text(
+            "UP/DOWN or 1-6 select   ENTER confirm   ESC back",
+            self.width / 2,
+            bottom - 26,
+            MENU_MUTED_TEXT,
+            font_size=SLOT_MENU_HINT_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="center",
+            anchor_y="center",
+        )
+        if self.status:
+            arcade.draw_text(
+                self.status,
+                self.width / 2,
+                bottom - 44,
+                MENU_MUTED_TEXT,
+                font_size=SLOT_MENU_HINT_SIZE,
+                font_name=FONT_NAME,
+                anchor_x="center",
+                anchor_y="center",
+            )
 
     def draw(self) -> None:
         arcade.draw_lrbt_rectangle_filled(
             0, self.width, 0, self.height, MENU_BACKGROUND
         )
+
+        if self.slot_screen is not None:
+            self._draw_slot_screen()
+            return
 
         self.title.draw(pixelated=True)
         self.buttons.draw(pixelated=True)
@@ -225,3 +399,4 @@ class MainMenu:
                 anchor_x="left",
                 anchor_y="center",
             )
+

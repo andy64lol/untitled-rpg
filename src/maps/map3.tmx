@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="18" height="15" tilewidth="32" tileheight="32" infinite="0" nextlayerid="18" nextobjectid="59">
+<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="18" height="15" tilewidth="32" tileheight="32" infinite="0" nextlayerid="18" nextobjectid="60">
  <tileset firstgid="1" source="../assets/tiles/tilesets/dungeon1.tsx"/>
  <layer id="1" name="tiles" width="18" height="15">
   <data encoding="csv">
@@ -39,7 +39,7 @@
 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 </data>
  </layer>
- <objectgroup id="2" name="objects" visible="0">
+ <objectgroup id="2" name="objects">
   <object id="5" name="chest1" x="112.031" y="188.973">
    <point/>
   </object>
@@ -61,56 +61,24 @@
   <object id="13" name="fakeChest1" x="526.8" y="315.498">
    <point/>
   </object>
-  <object id="15" name="playerSpawn" x="47.7324" y="316.08">
+  <object id="15" name="playerSpawn" type="bat" x="47.7324" y="316.08">
    <point/>
   </object>
-  <object id="16" name="spawnEnemy1" x="47.1501" y="86.1509">
+  <object id="16" name="spawnEnemy1" type="bat" x="47.1501" y="86.1509">
    <point/>
   </object>
-  <object id="17" name="spawnEnemy2" x="45.9859" y="442.396">
+  <object id="17" name="spawnEnemy2" type="bat" x="45.9859" y="442.396">
    <point/>
   </object>
-  <object id="18" name="spawnEnemy3" x="529.129" y="57.6279">
+  <object id="18" name="spawnEnemy3" type="bat" x="529.129" y="57.6279">
    <point/>
   </object>
-  <object id="19" name="spawnEnemy4" x="526.219" y="244.482">
+  <object id="19" name="spawnEnemy4" type="bat" x="526.219" y="244.482">
    <point/>
   </object>
   <object id="20" name="fountain" x="494.203" y="373.708">
    <point/>
   </object>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
  </objectgroup>
  <group id="13" name="rooms">
   <layer id="14" name="room1" width="18" height="15" visible="0">
