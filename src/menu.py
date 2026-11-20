@@ -308,7 +308,11 @@ class MainMenu:
             if state is None:
                 detail = "EMPTY"
             else:
-                detail = f"{state.get('map', 'unknown')}  -  {state.get('gold', 0)}g"
+                saved_map = Path(state.get("map", "unknown")).stem
+                detail = (
+                    f"{saved_map}  -  {state.get('gold', 0)}g  -  "
+                    f"{state.get('timestamp', 'no date')}"
+                )
             arcade.draw_text(
                 f"SLOT {slot}   {detail}",
                 left + 16,
@@ -386,6 +390,17 @@ class MainMenu:
             font_name=FONT_NAME,
             anchor_x="center",
             anchor_y="center",
+        )
+
+        arcade.draw_text(
+            f"v{VERSION}",
+            self.width - CORNER_MARGIN,
+            CORNER_MARGIN,
+            MENU_MUTED_TEXT,
+            font_size=HINT_SIZE,
+            font_name=FONT_NAME,
+            anchor_x="right",
+            anchor_y="bottom",
         )
 
         if self.status:

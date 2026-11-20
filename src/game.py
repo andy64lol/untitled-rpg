@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import arcade
@@ -17,6 +18,7 @@ from items import get_combat_stats
 from load import load_state
 from map import GameMap
 from menu import MainMenu
+from script import ScriptRunner
 from sprites import Player
 
 
@@ -97,6 +99,8 @@ class GameWindow(arcade.Window):
         self.camera = CameraController(self.width, self.height)
         self.menu = MainMenu(self.width, self.height, ASSETS_DIR)
         self.currentScreen = "menu"
+        self.script_flags: set[str] = set()
+        self.scripts: list[ScriptRunner] = []
         self.unsaved = False
         self.close_prompt = False
         self.death_timer: float | None = None
@@ -320,6 +324,7 @@ class GameWindow(arcade.Window):
     def start_game(self) -> None:
         self.load_map(self.start_map_index)
         self.player.reset()
+        self.scripts.clear()
         self.death_timer = None
         self.damage_numbers.clear()
         self.unsaved = True
@@ -329,6 +334,8 @@ class GameWindow(arcade.Window):
         self.update_health()
         self.update_combat_hud()
         self._enter_game()
+        if (SCRIPTS_DIR / f"init{SCRIPT_EXTENSION}").exists():
+            self.run_script("init")
 
     def enter_next_map(self) -> None:
         self.load_map(self.map_index + 1)
@@ -420,6 +427,7 @@ class GameWindow(arcade.Window):
 
     def _build_save_state(self) -> dict[str, Any]:
         return {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "map": self.map_name,
             "player": self.player.saveState(),
             "inventory": self.inventory.save_state(),
@@ -428,10 +436,13 @@ class GameWindow(arcade.Window):
             "chests": self.chests.save_state(),
             "enemies": self.enemies.save_state(),
             "map_objects": self.game_map.save_state(),
+            "script_flags": sorted(self.script_flags),
             "door_unlocked": self.won,
         }
 
     def _apply_save_state(self, state: dict[str, Any]) -> None:
+        self.script_flags = set(state.get("script_flags", []))
+        self.scripts.clear()
         if "player" in state:
             player_state = state["player"]
             inventory_state = state.get("inventory")
@@ -1420,6 +1431,9 @@ class GameWindow(arcade.Window):
         if choice == "yes":
             self.game_map.activate_pressure_plate(index)
 
+    def run_script(self, name: str) -> None:
+        self.scripts.append(ScriptRunner.load(name))
+
     def interact(self) -> None:
         if self.player.dead or self.player.moving:
             return
@@ -1448,6 +1462,14 @@ class GameWindow(arcade.Window):
         )
         if pressure_plate_index is not None:
             self.interact_pressure_plate(pressure_plate_index)
+            return
+
+        script_name = self.game_map.script_in_front(
+            self.player, self.player.facing
+        )
+        if script_name is not None:
+            self.keys.clear()
+            self.run_script(script_name)
             return
 
         if self.game_map.door_is_in_front(self.player, self.player.facing):
@@ -1900,6 +1922,13 @@ class GameWindow(arcade.Window):
             self.dialogue.update(delta_time)
             self.options.update(delta_time)
             return
+
+        if self.scripts:
+            self.scripts = [
+                script
+                for script in self.scripts
+                if not script.update(delta_time, self)
+            ]
 
         if self.fountain_cooldown > 0:
             self.fountain_cooldown = max(

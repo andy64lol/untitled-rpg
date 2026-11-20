@@ -3,12 +3,18 @@ from pathlib import Path
 import arcade
 
 # Project paths
+VERSION = "0.0.1-1"
 SRC_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = SRC_DIR / "assets"
 MAPS_DIR = SRC_DIR / "maps"
 SAVES_DIR = SRC_DIR / "saves"
 SAVE_PATH = SAVES_DIR / "slot1.urpgs"
 SAVE_SLOTS = 6
+
+# Untitled RPG Scripts (.urpgs)
+SCRIPTS_DIR = SRC_DIR / "scripts"
+SCRIPT_EXTENSION = ".urpgs"
+SCRIPT_OBJECT_PREFIX = "script:"
 
 
 def save_slot_path(slot: int) -> Path:

@@ -39,6 +39,9 @@ class GameMap:
         self.switches = self._objects_starting_with(
             map_objects, SWITCH_PREFIX
         )
+        self.script_objects = self._objects_starting_with(
+            map_objects, SCRIPT_OBJECT_PREFIX
+        )
         self.pressure_plates = self._objects_starting_with(
             map_objects, PRESSURE_PLATE_PREFIX
         )
@@ -385,6 +388,16 @@ class GameMap:
         self, player: arcade.Sprite, facing: str
     ) -> int | None:
         return self._index_in_front(self.pressure_plates, player, facing)
+
+    def script_in_front(
+        self, player: arcade.Sprite, facing: str
+    ) -> str | None:
+        index = self._index_in_front(
+            self.script_objects, player, facing
+        )
+        if index is None:
+            return None
+        return self.script_objects[index].name[len(SCRIPT_OBJECT_PREFIX):]
 
     def toggle_switch(self, index: int) -> bool:
         self.switch_states[index] = not self.switch_states[index]

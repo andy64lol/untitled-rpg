@@ -89,6 +89,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--script",
+        dest="script",
+        metavar="NAME",
+        help="Run a .urpgs script from scripts/ on startup",
+    )
+
+    parser.add_argument(
         "--output-file",
         dest="output_file",
         action="store_true",
@@ -111,7 +118,7 @@ def main(argv: list[str] | None = None) -> None:
         log_file.write("=" * 60 + "\n")
         log_file.flush()
         sys.stdout = _Tee(sys.stdout, log_file)
-    GameWindow(
+    window = GameWindow(
         start_level=args.level,
         health_infinite=args.health_infinite,
         disable_player_light=args.disable_player_light,
@@ -120,6 +127,9 @@ def main(argv: list[str] | None = None) -> None:
         disable_rooms=args.disable_rooms,
         disable_fog_of_war=args.disable_fog_of_war,
     )
+    if args.script:
+        window.start_game()
+        window.run_script(args.script)
     arcade.run()
 
 
