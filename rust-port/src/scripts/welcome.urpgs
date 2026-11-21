@@ -1,0 +1,8 @@
+// welcome.urpgs - shown when a new game starts
+
+if (map map1){
+    dialogue("Welcome to the dungeon, traveler. The air is cold, the halls are dark, and something is waiting below.");
+    dialogue("You have only some food, a shield, and a sword in your pack. Find the key, open the final door, and escape.");
+    dialogue("Press E to interact, Z to attack, I for your inventory, and ESC for the menu. Good luck.");
+}
+end();

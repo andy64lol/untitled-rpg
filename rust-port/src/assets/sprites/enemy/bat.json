@@ -1,0 +1,19 @@
+{
+  "mob_id": "bat",
+  "textures": "bat.png",
+  "animations": {
+    "walking":{
+      "animation": [0,1,2,3,4,5],
+      "looped": true
+    },
+    "defeat":{
+      "animation":"default"
+    }
+  },
+  "frames":{
+    "frame_size": [32, 32],
+    "frame_columns": 6,
+    "frame_count": 6,
+    "frame_duration": 0.12
+  }
+}
