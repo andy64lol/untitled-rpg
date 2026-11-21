@@ -6,25 +6,28 @@
     "stackable": true,
     "heal": 10,
     "price": 5,
-    "removeable": true
+    "removeable": true,
+    "quality": 0
   },
-  "pear":{
+  "pear": {
     "name": "Pear",
     "texture": "pear.png",
     "type": "consumeable",
     "stackable": true,
     "heal": 15,
     "price": 10,
-    "removeable": true
+    "removeable": true,
+    "quality": 1
   },
-  "banana":{
+  "banana": {
     "name": "Banana",
     "texture": "banana.png",
     "type": "consumeable",
     "stackable": true,
     "heal": 20,
     "price": 15,
-    "removeable": true
+    "removeable": true,
+    "quality": 1
   },
   "bronze_sword": {
     "name": "Bronze sword",
@@ -32,9 +35,10 @@
     "type": "weapon",
     "slot": "weapon",
     "stackable": false,
-    "damage" : 1,
+    "damage": 1,
     "price": 25,
-    "removeable": true
+    "removeable": true,
+    "quality": 1
   },
   "iron_sword": {
     "name": "Iron sword",
@@ -44,7 +48,8 @@
     "stackable": false,
     "damage": 2,
     "price": 50,
-    "removeable": true
+    "removeable": true,
+    "quality": 2
   },
   "rusty_iron_sword": {
     "name": "Rusty iron sword",
@@ -54,7 +59,8 @@
     "stackable": false,
     "damage": 1,
     "price": 15,
-    "removeable": true
+    "removeable": true,
+    "quality": 0
   },
   "titanium_sword": {
     "name": "Titanium sword",
@@ -64,7 +70,8 @@
     "stackable": false,
     "damage": 5,
     "price": 100,
-    "removeable": true
+    "removeable": true,
+    "quality": 3
   },
   "stainless_steel_shield": {
     "name": "Steel shield",
@@ -74,7 +81,8 @@
     "stackable": false,
     "defense": 5,
     "price": 75,
-    "removeable": true
+    "removeable": true,
+    "quality": 3
   },
   "leather_armour": {
     "name": "Leather armour",
@@ -84,7 +92,8 @@
     "stackable": false,
     "defense": 2,
     "price": 35,
-    "removeable": true
+    "removeable": true,
+    "quality": 1
   },
   "key": {
     "name": "Key",
@@ -92,6 +101,7 @@
     "type": "key",
     "stackable": false,
     "price": 0,
-    "removeable": false
+    "removeable": false,
+    "quality": 0
   }
 }

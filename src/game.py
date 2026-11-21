@@ -1125,37 +1125,14 @@ class GameWindow(arcade.Window):
             f"| HP: {self.player.hp}/{self.player.maxHp}"
         )
 
-    def debug_log_lights(self) -> None:
-        tile_width = self.game_map.tilemap.tile_width
-        tile_height = self.game_map.tilemap.tile_height
-        cols = int(self.game_map.tilemap.width)
-        rows = int(self.game_map.tilemap.height)
-        if self.disable_map_light:
-            lights: list[tuple[float, float]] = []
-        else:
-            lights = self._light_emit_positions()
-
-        visible_lights = self._visible_light_indices(lights)
-        xs = (np.arange(cols, dtype=np.float32) + 0.5) * tile_width
-        ys = (np.arange(rows, dtype=np.float32) + 0.5) * tile_height
-        levels = self._light_values(
-            xs,
-            ys,
-            lights,
-            visible_lights,
-        )
-
-        lit_count = 0
-        for row in range(rows):
-            for col in range(cols):
-                level = float(levels[row, col])
-                if level > 0.01:
-                    lit_count += 1
-                    print(f"[lights] tile=({col},{row}) level={level:.2f}")
+    def debug_log_rooms(self) -> None:
+        if not self.room_mode:
+            return
+        rooms = sorted(self._room_visible_rooms())
+        tiles = len(self._room_visible_tiles())
         print(
-            f"[lights] {self.map_name}: {lit_count} lit tiles "
-            f"out of {cols * rows} in player view "
-            f"({len(visible_lights)}/{len(lights)} sources seen)"
+            f"[rooms] {self.map_name}: {', '.join(rooms) if rooms else 'none'} "
+            f"| {tiles} visible tiles"
         )
 
     def draw_darkness(self) -> None:
@@ -1943,7 +1920,7 @@ class GameWindow(arcade.Window):
         if self.player.just_finished_move:
             self.enemies.step(self.player)
             self.debug_log_move()
-            self.debug_log_lights()
+            self.debug_log_rooms()
 
         if bumped_fountain:
             self.open_fountain()

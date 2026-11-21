@@ -19,6 +19,7 @@ class Item:
     heal: int = 0
     price: int = 0
     removeable: bool = True
+    quality: int = 0
 
 
 def get_combat_stats(equipment) -> tuple[int, int]:
@@ -54,6 +55,7 @@ def load_items() -> dict[str, Item]:
             heal=entry.get("heal", 0),
             price=entry.get("price", 0),
             removeable=entry.get("removeable", item_id != "key"),
+            quality=max(0, min(3, int(entry.get("quality", 0)))),
         )
 
     return items

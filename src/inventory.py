@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -7,6 +8,28 @@ from PIL import ImageFilter
 import font  # noqa: F401
 from config import *
 from items import ITEMS
+
+STAR_SIZE = 9
+STAR_GAP = 3
+
+
+def _star_points(cx: float, cy: float) -> list[tuple[float, float]]:
+    points: list[tuple[float, float]] = []
+    for i in range(10):
+        radius = STAR_SIZE / 2 if i % 2 == 0 else STAR_SIZE / 4
+        angle = math.pi / 2 + i * math.pi / 5
+        points.append((cx + math.cos(angle) * radius, cy + math.sin(angle) * radius))
+    return points
+
+
+def draw_quality(x: float, y: float, quality: int) -> None:
+    for index in range(3):
+        cx = x + index * (STAR_SIZE + STAR_GAP)
+        points = _star_points(cx, y)
+        if index < quality:
+            arcade.draw_polygon_filled(points, INV_ACCENT_COLOR)
+        else:
+            arcade.draw_polygon_outline(points, INV_SLOT_BORDER, 2)
 
 
 def _load_slot_textures() -> tuple[dict[str, arcade.Texture], dict[str, arcade.Texture]]:
@@ -332,6 +355,15 @@ class EquipmentPanel:
         self.icons.draw(pixelated=True)
         self.label.draw()
 
+        if focused and self.selected_item_id is not None:
+            slot_left, right, slot_bottom, _ = self.highlights[self.index]
+            width = 3 * STAR_SIZE + 2 * STAR_GAP
+            draw_quality(
+                (slot_left + right - width) / 2,
+                slot_bottom - STAR_SIZE - 1,
+                ITEMS[self.selected_item_id].quality,
+            )
+
     def _slot_left(self) -> float:
         return self.left + PANEL_PADDING
 
@@ -539,6 +571,16 @@ class InventoryPanel:
         self.gold_label.draw()
         self.label.draw()
 
+        if focused and self.selected is not None:
+            slot_left = self._slot_left(self.index % COLUMNS)
+            slot_bottom = self._slot_bottom(self.index // COLUMNS)
+            width = 3 * STAR_SIZE + 2 * STAR_GAP
+            draw_quality(
+                slot_left + (SLOT_SIZE - width) / 2,
+                slot_bottom - STAR_SIZE - 1,
+                ITEMS[self.selected.item_id].quality,
+            )
+
     def _slot_left(self, column: int) -> float:
         return self.left + PANEL_PADDING + column * (SLOT_SIZE + SLOT_GAP)
 
@@ -583,7 +625,9 @@ class InventoryPanel:
         elif item.item_type == "key":
             action_hint = "Cannot sell"
 
-        self.label.text = f"{name} · {action_hint}" if action_hint else name
+        self.label.text = f"{name}" + (
+            f" · {action_hint}" if action_hint else ""
+        )
 
     def set_gold(self, gold: int) -> None:
         self.gold = gold
