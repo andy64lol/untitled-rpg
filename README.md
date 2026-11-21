@@ -1,39 +1,98 @@
 # Untitled RPG
 
-a smol pixel-art dungeon rpg made with python and arcade
+a smol pixel-art dungeon rpg made with python + arcade, now with a Rust/macroquad port
 
-Explore the dungeon, fight your way through hazards (no monsters added rn), and open the chests scattered around the map. each chest contains a random reward, and the last unopened chest on a floor contains the key to the door. watch out though, some chests are fakes that only mock you for being so greedy
+Explore the dungeon, fight enemies, avoid hazards, and open the chests scattered around each map. Every chest contains a random reward, and the last unopened chest on a floor contains the key to the door. Watch out though, some chests are fakes that only mock you for being so greedy.
 
-just run main.py from src with 
+## Run it
+
+### Python
 
 ```bash
 python3 src/main.py
 ```
 
+### Rust
+
+```bash
+cargo run --manifest-path rust-port/Cargo.toml
+```
+
+To build or test the Rust port without running it:
+
+```bash
+cargo build --manifest-path rust-port/Cargo.toml
+cargo test --manifest-path rust-port/Cargo.toml
+```
+
+The Rust port keeps its own maps, assets, scripts, saves, and logs under `rust-port/src/`. Saves are separate between the two versions, and the Rust port has no audio yet.
+
 ## Goal
 
-Open the chests on map1, take the key they hide, and give it to the door to go down to map2. do the same on map2 and repeat
+Open the chests on map1, take the key they hide, and give it to the door to go down to map2. Do the same for maps 2 through 5 and reach the ending.
 
 ## Features
 
 - tile-based dungeon movement
 - chest rewards and inventory management
 - fake chests that mock your greed
-- equipment and combat stats
+- equipment, combat stats, and enemies
 - health, damage, hazards, and healing fountains
-- locked doors that take you from map1 to map2, then to the ending
+- locked doors between maps
+- room visibility, light sources, shadows, and fog of war
+- simple `.urpgs` script events
 - save and load support
+- runtime config for the Rust port in `rust-port/.config`
 
 ## Controls
 
 | Key | what action they perform |
 | --- | --- |
 | `WASD` | move |
-| `E` / `Enter` | Interact |
-| `Z` | attack or damage |
-| `I` | Open your inventory |
-| `H` | Take damage (debug), don't use in game |
-| `Esc` | Pause or close a dialogue, main screen if in none |
-| `Space` | Confirm dialogue choices |
+| `E` / `Enter` | interact |
+| `Z` | attack or skip dialogue text |
+| `I` | open/close your inventory |
+| `Tab` | switch inventory/equipment focus |
+| Arrow keys | navigate menus/inventory, or pan the camera with `--freecam` |
+| `1` - `6` | choose a save slot from the main menu or slot screen |
+| `Left` / `Right` | cycle save slots from the main menu |
+| `Enter` / `Space` | confirm, use an item, or continue |
+| `Y` / `N` | confirm or cancel the new-game warning |
+| `H` | take damage (debug), don't use in game |
+| `Esc` | pause, close a dialogue, return to the main screen |
+
+## Command line flags
+
+Both versions accept:
+
+| Flag | what it does |
+| --- | --- |
+| `--lv1` ... `--lv5` | start directly on that map |
+| `--health-infinite` | ignore all damage |
+| `--freecam` | detach the camera from the player; pan with arrow keys |
+| `--disable-player-light` | disable the player's own vision light |
+| `--disable-map-light` | disable light sources placed in the map |
+| `--disable-rooms` | use light-based visibility instead of room visibility |
+| `--disable-fog-of-war` | show all enemies, even on dark tiles |
+| `--script NAME` | run `scripts/NAME.urpgs` on startup |
+| `--output-file` | also write logs to `logs/runX.txt` |
+
+Example:
+
+```bash
+cargo run --manifest-path rust-port/Cargo.toml -- --lv2 --disable-rooms --output-file
+```
+
+## Config
+
+The Python version keeps its constants in `src/config.py`.
+
+The Rust version reads simple `key=value` overrides from `rust-port/.config` at startup. It holds window settings, player/combat values, inventory layout, lighting, effects, transition timings, death/win text, and font sizes. Missing or invalid values fall back to built-in defaults.
+
+## Scripts
+
+Script files use the `.urpgs` extension and live in `src/scripts/` for Python and `rust-port/src/scripts/` for Rust. See `src/scripts/README.txt` for the script syntax.
+
+## License
 
 The project is released under the MIT License.
