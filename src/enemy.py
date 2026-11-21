@@ -5,10 +5,17 @@ from dataclasses import dataclass
 from typing import Any
 
 import arcade
+from PIL import Image
 
 from config import *
 from map import snap_to_tile_center
 from sprites import Player
+
+
+@dataclass(frozen=True)
+class MobAnimation:
+    frames: tuple[int, ...]
+    looped: bool = True
 
 
 @dataclass(frozen=True)
@@ -19,27 +26,92 @@ class EnemyType:
     frame_duration: float
     speed: float
     damage: int
+    walking: MobAnimation
+    defeat: MobAnimation
+
+
+def _load_stats() -> dict[str, dict[str, Any]]:
+    if not ENEMY_JSON_PATH.exists():
+        return {}
+    with ENEMY_JSON_PATH.open(encoding="utf-8") as handle:
+        data = json.load(handle)
+    return {
+        entry.get("id", enemy_id): entry
+        for enemy_id, entry in data.items()
+    }
+
+
+def _animation(
+    spec: Any, frame_count: int, default: tuple[int, ...] | None = None
+) -> MobAnimation:
+    if isinstance(spec, dict):
+        frames = spec.get("animation", "default")
+        looped = bool(spec.get("looped", True))
+    else:
+        frames = spec
+        looped = True
+    if frames == "default" or frames is None:
+        indices = default if default is not None else tuple(range(frame_count))
+    else:
+        indices = tuple(int(index) for index in frames)
+    return MobAnimation(indices, looped)
 
 
 def load_enemies() -> dict[str, EnemyType]:
-    with ENEMY_JSON_PATH.open(encoding="utf-8") as handle:
-        data = json.load(handle)
-
+    stats = _load_stats()
     enemies: dict[str, EnemyType] = {}
-    for enemy_id, entry in data.items():
-        sheet = arcade.load_spritesheet(str(ENEMIES_DIR / entry["texture"]))
-        frames = sheet.get_texture_grid(
-            size=tuple(entry["frame_size"]),
-            columns=entry["frame_columns"],
-            count=entry["frame_count"],
+
+    for path in sorted(ENEMIES_DIR.glob(f"*{MOB_DATA_EXTENSION}")):
+        with path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+
+        mob_id = data.get("mob_id") or path.stem
+        texture_name = data.get("textures") or f"{mob_id}.png"
+        frame_data = data.get("frames", {})
+        frame_size = tuple(
+            frame_data.get("frame_size", MOB_DEFAULT_FRAME_SIZE)
         )
-        enemies[enemy_id] = EnemyType(
-            id=enemy_id,
-            name=entry["name"],
-            frames=tuple(frames),
-            frame_duration=entry["frame_duration"],
-            speed=entry["speed"],
-            damage=entry.get("damage", 0),
+        columns = int(
+            frame_data.get("frame_columns", MOB_DEFAULT_FRAME_COLUMNS)
+        )
+
+        with Image.open(ENEMIES_DIR / texture_name) as image:
+            rows = image.height // frame_size[1]
+        frame_count = columns * rows
+
+        sheet = arcade.load_spritesheet(str(ENEMIES_DIR / texture_name))
+        frames = tuple(
+            sheet.get_texture_grid(
+                size=frame_size, columns=columns, count=frame_count
+            )
+        )
+
+        animations = data.get("animations", {})
+        walking = _animation(animations.get("walking", "default"), frame_count)
+        defeat = _animation(
+            animations.get("defeat", "default"),
+            frame_count,
+            default=(0,),
+        )
+
+        entry = stats.get(mob_id, {})
+        enemies[mob_id] = EnemyType(
+            id=mob_id,
+            name=data.get("name", entry.get("name", mob_id.replace("_", " ").title())),
+            frames=frames,
+            frame_duration=float(
+                frame_data.get(
+                    "frame_duration", MOB_DEFAULT_FRAME_DURATION
+                )
+            ),
+            speed=float(
+                data.get("speed", entry.get("speed", MOB_DEFAULT_SPEED))
+            ),
+            damage=int(
+                data.get("damage", entry.get("damage", MOB_DEFAULT_DAMAGE))
+            ),
+            walking=walking,
+            defeat=defeat,
         )
 
     return enemies
@@ -67,6 +139,39 @@ class Enemy(arcade.Sprite):
         self.flip_from = 1.0
         self.flip_to = 1.0
         self.facing_x = 1
+        self.dying = False
+        self.death_timer = 0.0
+
+    def die(self) -> None:
+        if self.dying:
+            return
+        self.dying = True
+        self.death_timer = ENEMY_DEATH_DURATION
+        self.moving = False
+        self.flip_timer = 0.0
+        self.scale_x = 1.0
+        self.scale_y = 1.0
+        self.angle = 0.0
+
+    def update_death_animation(self, delta_time: float) -> bool:
+        if not self.dying:
+            return False
+        self.death_timer = max(0.0, self.death_timer - delta_time)
+        progress = 1.0 - self.death_timer / ENEMY_DEATH_DURATION
+        frames = self.kind.defeat.frames
+        if frames:
+            index = min(
+                len(frames) - 1,
+                int(progress * len(frames)),
+            )
+            frame_number = frames[index]
+            if 0 <= frame_number < len(self.kind.frames):
+                self.texture = self.kind.frames[frame_number]
+        self.scale_x = 1.0 + 0.25 * math.sin(math.pi * progress)
+        self.scale_y = max(0.05, 1.0 - 0.9 * progress)
+        self.angle = 80.0 * progress * (1.0 if self.facing_x > 0 else -1.0)
+        self.alpha = int(255 * (1.0 - progress))
+        return self.death_timer <= 0.0
 
     def _update_motion_animation(self, delta_time: float) -> None:
         swing_target = 0.0
@@ -93,13 +198,24 @@ class Enemy(arcade.Sprite):
                 self.scale_x = self.flip_to
 
     def update_animation(self, delta_time: float = 1 / 60, *args) -> None:
+        if self.dying:
+            return
         self.frame_timer += delta_time
         if self.frame_timer < self.kind.frame_duration:
             return
 
         self.frame_timer %= self.kind.frame_duration
-        self.frame_index = (self.frame_index + 1) % len(self.kind.frames)
-        self.texture = self.kind.frames[self.frame_index]
+        frames = self.kind.walking.frames
+        if not frames:
+            return
+        self.frame_index += 1
+        if self.kind.walking.looped:
+            self.frame_index %= len(frames)
+        else:
+            self.frame_index = min(self.frame_index, len(frames) - 1)
+        frame_number = frames[self.frame_index]
+        if 0 <= frame_number < len(self.kind.frames):
+            self.texture = self.kind.frames[frame_number]
 
     def step_to(self, center_x: float, center_y: float) -> None:
         self.target_x = center_x
@@ -116,6 +232,8 @@ class Enemy(arcade.Sprite):
                 self.swing_phase = 0.0
 
     def update_movement(self, delta_time: float) -> None:
+        if self.dying:
+            return
         self._update_motion_animation(delta_time)
         if not self.moving:
             return
@@ -153,7 +271,7 @@ class EnemyManager:
 
     @property
     def alive_count(self) -> int:
-        return len(self.enemies)
+        return sum(1 for enemy in self.enemies if not enemy.dying)
 
     def reset(self) -> None:
         self.enemies.clear()
@@ -198,18 +316,24 @@ class EnemyManager:
         return False
 
     def attack_at(self, center_x: float, center_y: float) -> bool:
-        """Remove the first enemy in the player's attack tile."""
-        for enemy in list(self.enemies):
+        """Start the death animation for the first enemy in the attack tile."""
+        for enemy in self.enemies:
+            if enemy.dying:
+                continue
             if (
                 abs(enemy.center_x - center_x) <= self.tile_width
                 and abs(enemy.center_y - center_y) <= self.tile_height
             ):
-                self.enemies.remove(enemy)
+                enemy.die()
                 return True
         return False
 
     def update(self, delta_time: float) -> None:
-        for enemy in self.enemies:
+        for enemy in list(self.enemies):
+            if enemy.dying:
+                if enemy.update_death_animation(delta_time):
+                    self.enemies.remove(enemy)
+                continue
             enemy.update_movement(delta_time)
 
         self.enemies.update_animation(delta_time)
@@ -248,7 +372,7 @@ class EnemyManager:
             (
                 enemy.kind.damage
                 for enemy in player.collision_with(self.enemies)
-                if isinstance(enemy, Enemy)
+                if isinstance(enemy, Enemy) and not enemy.dying
             ),
             default=0,
         )
@@ -261,6 +385,7 @@ class EnemyManager:
             "enemies": [
                 {"type": enemy.kind.id, "x": enemy.center_x, "y": enemy.center_y}
                 for enemy in self.enemies
+                if not enemy.dying
             ],
             "spawned": sorted(self.spawned),
         }

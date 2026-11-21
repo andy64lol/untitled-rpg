@@ -20,10 +20,18 @@ SCRIPT_OBJECT_PREFIX = "script:"
 def save_slot_path(slot: int) -> Path:
     return SAVES_DIR / f"slot{slot}.urpgs"
 LOGS_DIR = SRC_DIR / "logs"
+DATA_DIR = SRC_DIR / "data"
 ITEMS_DIR = ASSETS_DIR / "items"
-ITEMS_JSON_PATH = SRC_DIR / "items.json"
+ITEMS_JSON_PATH = DATA_DIR / "items.json"
 ENEMIES_DIR = ASSETS_DIR / "sprites" / "enemy"
-ENEMY_JSON_PATH = SRC_DIR / "enemy.json"
+ENEMIES_JSON_PATH = DATA_DIR / "enemies.json"
+ENEMY_JSON_PATH = ENEMIES_JSON_PATH
+MOB_DATA_EXTENSION = ".json"
+MOB_DEFAULT_FRAME_SIZE = (32, 32)
+MOB_DEFAULT_FRAME_COLUMNS = 6
+MOB_DEFAULT_FRAME_DURATION = 0.1
+MOB_DEFAULT_SPEED = 160
+MOB_DEFAULT_DAMAGE = 0
 EQUIPMENT_SLOTS_DIR = ASSETS_DIR / "UI" / "player_equipment_slots"
 FONT_PATH = ASSETS_DIR / "UI" / "font" / "PixeloidMono-nAOpP.ttf"
 TITLE_PATH = ASSETS_DIR / "UI" / "menu" / "game_title.png"
@@ -103,6 +111,7 @@ DAMAGE_FLASH_COLOR = (255, 110, 110)
 DAMAGE_NUMBER_LIFETIME = 0.9
 DAMAGE_NUMBER_RISE = 55
 DAMAGE_NUMBER_FONT_SIZE = 18
+ENEMY_DEATH_DURATION = 0.45
 DEATH_ANIMATION_DURATION = 0.6
 DEATH_SCREEN_DELAY = 5.0
 DEATH_TITLE = "YOU DIED"
@@ -126,7 +135,13 @@ WINDOW_TITLE = "Untitled RPG"
 MIN_WINDOW_WIDTH = 960
 MIN_WINDOW_HEIGHT = 540
 WINDOW_BACKGROUND = (10, 12, 20, 255)
-MAP_FILES = ("map1.tmx", "map2.tmx", "map3.tmx", "map4.tmx")
+MAP_FILES = (
+    "map1.tmx",
+    "map2.tmx",
+    "map3.tmx",
+    "map4.tmx",
+    "map5.tmx",
+)
 TRANSITION_DURATION = 1.0
 
 # Fountain, switch, and door messages

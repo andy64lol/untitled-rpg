@@ -1,0 +1,16 @@
+{
+  "bat": {
+    "name": "Bat",
+    "id": "bat",
+    "speed": 160,
+    "damage": 10,
+    "scripts": null
+  },
+  "snake": {
+    "name": "Snake",
+    "id": "snake",
+    "speed": 190,
+    "damage": 20,
+    "scripts": null
+  }
+}
