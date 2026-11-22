@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::assets::Assets;
-use crate::LOG;
+use crate::map::log_line;
 
 #[derive(Clone, Debug)]
 enum Node {
@@ -40,7 +40,6 @@ pub enum ScriptAction {
     Spawn { id: String, col: Option<i32>, row: Option<i32> },
     Flag(String),
     Unflag(String),
-    Run(String),
     End,
 }
 
@@ -59,7 +58,13 @@ impl ScriptRunner {
         } else {
             assets.src().join("scripts").join(format!("{name}.urpgs"))
         };
-        let text = std::fs::read_to_string(path).ok()?;
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(_) => {
+                log_line(&format!("[script] missing script: {name}"));
+                return None;
+            }
+        };
         let tokens = tokenize(&text);
         let mut parser = Parser { tokens, index: 0 };
         let nodes = parser.parse_block();
@@ -71,14 +76,18 @@ impl ScriptRunner {
         })
     }
 
-    pub fn update(
+    pub fn update<F>(
         &mut self,
         dt: f32,
         ctx: &ScriptContext,
         dialogue_open: bool,
-    ) -> ScriptAction {
+        load: &F,
+    ) -> ScriptAction
+    where
+        F: Fn(&str) -> Option<ScriptRunner>,
+    {
         if let Some(nested) = self.nested.last_mut() {
-            let action = nested.update(dt, ctx, dialogue_open);
+            let action = nested.update(dt, ctx, dialogue_open, load);
             if matches!(action, ScriptAction::None | ScriptAction::End) {
                 if matches!(action, ScriptAction::End) || !nested.is_running() {
                     self.nested.pop();
@@ -130,8 +139,11 @@ impl ScriptRunner {
                             return ScriptAction::Dialogue(args.join(" "));
                         }
                         "run" => {
-                            return args.first().map(|s| ScriptAction::Run(s.clone()))
-                                .unwrap_or(ScriptAction::None);
+                            let name = arg(&args, 0);
+                            if let Some(runner) = load(&name) {
+                                self.nested.push(runner);
+                            }
+                            return ScriptAction::None;
                         }
                         "end" => {
                             self.frames.clear();
@@ -163,13 +175,7 @@ impl ScriptRunner {
                         }
                         "flag" => return ScriptAction::Flag(arg(&args, 0)),
                         "unflag" => return ScriptAction::Unflag(arg(&args, 0)),
-                        _ => {
-                            unsafe {
-                                if let Some(log) = LOG.as_mut() {
-                                    log.log(&format!("[script] unknown command: {name}"));
-                                }
-                            }
-                        }
+                        _ => log_line(&format!("[script] unknown command: {name}")),
                     }
                 }
             }
@@ -457,6 +463,10 @@ impl ConditionValue {
                 }
             }
             ConditionValue::Text(left) => match op {
+                ">" => left.as_str() > right,
+                "<" => left.as_str() < right,
+                ">=" => left.as_str() >= right,
+                "<=" => left.as_str() <= right,
                 "==" => left == right,
                 "!=" => left != right,
                 _ => false,
@@ -487,9 +497,8 @@ mod tests {
         assert!(nodes.len() >= 5);
     }
 
-    #[test]
-    fn evaluates_player_conditions() {
-        let mut ctx = ScriptContext {
+    fn test_context() -> ScriptContext {
+        ScriptContext {
             health: 40,
             max_health: 100,
             dead: false,
@@ -499,10 +508,42 @@ mod tests {
             map: "map1".into(),
             flags: HashSet::new(),
             items: HashMap::new(),
-        };
+        }
+    }
+
+    fn runner(name: &str, args: &[&str]) -> ScriptRunner {
+        ScriptRunner {
+            frames: vec![(vec![Node::Command {
+                name: name.into(),
+                args: args.iter().map(|value| value.to_string()).collect(),
+            }], 0)],
+            nested: Vec::new(),
+            wait: 0.0,
+            waiting_dialogue: false,
+        }
+    }
+
+    #[test]
+    fn evaluates_player_conditions() {
+        let mut ctx = test_context();
         assert!(eval_condition(&["player.health".into(), "<".into(), "50".into()], &ctx));
         assert!(eval_condition(&["player.facing".into(), "right".into()], &ctx));
+        assert!(eval_condition(&["player.map".into(), ">".into(), "map0".into()], &ctx));
+        assert!(!eval_condition(&["player.map".into(), "<".into(), "map0".into()], &ctx));
         ctx.flags.insert("met_wizard".into());
         assert!(eval_condition(&["flag".into(), "met_wizard".into()], &ctx));
+    }
+
+    #[test]
+    fn nested_run_suspends_parent_until_child_finishes() {
+        let ctx = test_context();
+        let mut parent = runner("gold", &["1"]);
+        parent.nested.push(runner("gold", &["7"]));
+        let action = parent.update(0.016, &ctx, false, &|_| None);
+        assert!(matches!(action, ScriptAction::Gold(7)));
+        let action = parent.update(0.016, &ctx, false, &|_| None);
+        assert!(matches!(action, ScriptAction::End));
+        let action = parent.update(0.016, &ctx, false, &|_| None);
+        assert!(matches!(action, ScriptAction::Gold(1)));
     }
 }

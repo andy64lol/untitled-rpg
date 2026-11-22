@@ -40,7 +40,7 @@ Open the chests on map1, take the key they hide, and give it to the door to go d
 - health, damage, hazards, and healing fountains
 - locked doors between maps
 - room visibility, light sources, shadows, and fog of war
-- simple `.urpgs` script events (`init.urpgs` runs by default on a new game)
+- simple `.urpgs` script events with nested `run()` calls (`init.urpgs` runs by default on a new game)
 - save and load support
 - runtime config for the Rust port in `rust-port/.config`
 
@@ -60,6 +60,7 @@ Open the chests on map1, take the key they hide, and give it to the door to go d
 | `Enter` / `Space` | confirm, use an item, or continue |
 | `Y` / `N` | confirm or cancel the new-game warning |
 | `H` | spawn a nearby enemy (debug) |
+| `F1` | open/close the in-game controls overlay |
 | `M` | minimize/expand the debug panel |
 | `E` | open the config editor from the expanded debug panel |
 | `Esc` | pause, close a dialogue, return to the main screen |
@@ -97,7 +98,7 @@ The Rust version reads simple `key=value` overrides from `rust-port/.config` at 
 
 The in-game Settings menu is a GUI alternative to the CLI flags. It can change the start map, startup script, infinite health, freecam, lights, room visibility, fog of war, enemies, the debug overlay, and log output without restarting. Changing a setting reveals the debug panel in the top-right corner.
 
-The debug panel lists only values that differ from the startup config, as `key: value (Original originalValue)`. Press `M` to minimize it to a small `DEBUG` badge without hiding that debug mode is active. Press `E` while expanded to open the config editor: navigate with arrow keys/`W`/`S`, press `Enter` to edit a value, type the new value, and press `Enter` to apply it or `Esc` to cancel. Runtime config changes are saved in every save slot and restored when that slot is loaded.
+The debug panel lists only values that differ from the startup config, as `key: value (Original originalValue)`. Press `M` to minimize it to a small `DEBUG` badge without hiding that debug mode is active. Press `E` while expanded to open the config editor: navigate with arrow keys/`W`/`S`, press `Enter` to edit a value, type the new value, and press `Enter` to apply it or `Esc` to cancel. Press `R` in the editor to reset the selected value to its original startup config, or `A` to reset every config value. Runtime config changes are saved in every save slot and restored when that slot is loaded.
 
 ## Scripts
 

@@ -213,8 +213,9 @@ fn window_conf() -> Conf {
     let settings = config::get();
     Conf {
         window_title: settings.window_title.clone(),
-        window_width: settings.window_width,
-        window_height: settings.window_height,
+        window_width: settings.window_width.max(settings.min_window_width),
+        window_height: settings.window_height.max(settings.min_window_height),
+        window_resizable: true,
         ..Default::default()
     }
 }

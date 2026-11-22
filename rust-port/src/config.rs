@@ -367,6 +367,17 @@ pub fn set_value(key: &str, value: &str) -> bool {
     true
 }
 
+pub fn reset_value(key: &str) -> bool {
+    let Some(value) = original_value(key) else {
+        return false;
+    };
+    set_value(key, &value)
+}
+
+pub fn reset_all() {
+    restore(original());
+}
+
 impl RuntimeConfig {
     pub fn load(path: &Path) -> Self {
         let mut config = Self::default();

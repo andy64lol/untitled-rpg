@@ -133,6 +133,12 @@ enum InvFocus {
     Equipment,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MapTransition {
+    FadeOut { elapsed: f32, target: usize },
+    FadeIn { elapsed: f32 },
+}
+
 pub struct Game {
     assets: Assets,
     cli: Cli,
@@ -165,7 +171,7 @@ pub struct Game {
     new_game_prompt: bool,
     bump_lock: bool,
     death_timer: Option<f32>,
-    transition: Option<(f32, bool, usize)>,
+    transition: Option<MapTransition>,
     slot: usize,
     settings_index: usize,
     settings_message: String,
@@ -174,6 +180,7 @@ pub struct Game {
     debug_edit_index: usize,
     debug_edit_value: Option<String>,
     debug_message: String,
+    help_open: bool,
     available_scripts: Vec<String>,
     inventory_open: bool,
     inv_focus: InvFocus,
@@ -254,6 +261,7 @@ impl Game {
             debug_edit_index: 0,
             debug_edit_value: None,
             debug_message: String::new(),
+            help_open: false,
             available_scripts,
             inventory_open: false,
             inv_focus: InvFocus::Inventory,
@@ -364,6 +372,34 @@ impl Game {
         self.update_fog(0.0);
     }
 
+    fn advance_transition(
+        transition: &mut Option<MapTransition>,
+        dt: f32,
+        duration: f32,
+    ) -> Option<usize> {
+        let duration = duration.max(f32::EPSILON);
+        match (*transition)? {
+            MapTransition::FadeOut { elapsed, target } => {
+                let elapsed = elapsed + dt;
+                if elapsed < duration {
+                    *transition = Some(MapTransition::FadeOut { elapsed, target });
+                    return None;
+                }
+                *transition = Some(MapTransition::FadeIn { elapsed: 0.0 });
+                Some(target)
+            }
+            MapTransition::FadeIn { elapsed } => {
+                let elapsed = elapsed + dt;
+                if elapsed < duration {
+                    *transition = Some(MapTransition::FadeIn { elapsed });
+                } else {
+                    *transition = None;
+                }
+                None
+            }
+        }
+    }
+
     fn run_script(&mut self, name: &str) {
         if let Some(runner) = ScriptRunner::load(&self.assets, name) {
             self.scripts.push(runner);
@@ -392,10 +428,12 @@ impl Game {
     fn process_script_actions(&mut self, dt: f32) {
         let ctx = self.script_context();
         let dialogue_open = self.dialogue.open;
+        let assets = &self.assets;
+        let load = |name: &str| ScriptRunner::load(assets, name);
         let mut actions = Vec::new();
         let mut index = 0;
         while index < self.scripts.len() {
-            let action = self.scripts[index].update(dt, &ctx, dialogue_open);
+            let action = self.scripts[index].update(dt, &ctx, dialogue_open, &load);
             if matches!(action, ScriptAction::None) {
                 index += 1;
                 continue;
@@ -417,7 +455,11 @@ impl Game {
         match action {
             ScriptAction::Dialogue(text) => self.dialogue.show(&text),
             ScriptAction::Give { id, count } => {
-                let stackable = self.items.get(&id).map_or(false, |i| i.stackable);
+                let Some(item) = self.items.get(&id) else {
+                    log_line(&format!("[script] unknown item: {id}"));
+                    return;
+                };
+                let stackable = item.stackable;
                 if self.inventory.add(&id, count, stackable) {
                     self.unsaved = true;
                 }
@@ -468,7 +510,6 @@ impl Game {
                 self.script_flags.remove(&name);
                 self.unsaved = true;
             }
-            ScriptAction::Run(name) => self.run_script(&name),
             ScriptAction::End | ScriptAction::None => {}
         }
     }
@@ -542,24 +583,27 @@ impl Game {
 
         self.update_fog(dt);
 
-        if let Some((timer, out, target)) = self.transition {
-            let timer = timer + dt;
-            if timer >= crate::config::get().transition_duration {
-                if !out {
-                    self.load_map(target);
-                    self.dialogue.show("The door opens. You go deeper into the dungeon.");
-                    self.transition = None;
-                } else {
-                    self.transition = Some((0.0, false, target));
-                }
-            } else {
-                self.transition = Some((timer, out, target));
+        if self.transition.is_some() {
+            let duration = crate::config::get().transition_duration;
+            if let Some(target) = Self::advance_transition(&mut self.transition, dt, duration) {
+                self.load_map(target);
+                self.dialogue.show("The door opens. You go deeper into the dungeon.");
             }
             return;
         }
 
         let pressed: Vec<KeyCode> = get_keys_pressed().into_iter().collect();
         if self.handle_debug_keys(&pressed) {
+            return;
+        }
+        if pressed.contains(&KeyCode::F1) {
+            self.help_open = !self.help_open;
+            return;
+        }
+        if self.help_open {
+            if pressed.contains(&KeyCode::Escape) || pressed.contains(&KeyCode::Enter) {
+                self.help_open = false;
+            }
             return;
         }
         if self.dialogue.open || self.options.open {
@@ -924,6 +968,25 @@ impl Game {
             if pressed.contains(&KeyCode::End) {
                 self.debug_edit_index = count - 1;
             }
+            if pressed.contains(&KeyCode::A) {
+                config::reset_all();
+                self.debug_message = "all config values reset to original".into();
+                self.unsaved = true;
+                log_line("[debug] all config values reset to original");
+                return true;
+            }
+            if pressed.contains(&KeyCode::R) {
+                let keys = config::keys();
+                let key = keys[self.debug_edit_index.min(keys.len() - 1)].clone();
+                if config::reset_value(&key) {
+                    self.debug_message = format!("{key} reset to original");
+                    self.unsaved = true;
+                    log_line(&format!("[debug] {key} reset to original"));
+                } else {
+                    self.debug_message = format!("cannot reset {key}");
+                }
+                return true;
+            }
             if pressed.contains(&KeyCode::Enter) || pressed.contains(&KeyCode::E) {
                 let keys = config::keys();
                 let key = keys[self.debug_edit_index.min(keys.len() - 1)].clone();
@@ -1039,10 +1102,10 @@ impl Game {
             self.open_fake_chest(index);
             return;
         }
-        self.interact_switch_in_front();
-        self.interact_plate_in_front();
-        self.interact_script_in_front();
-        self.interact_door_in_front();
+        let _handled = self.interact_switch_in_front()
+            || self.interact_plate_in_front()
+            || self.interact_script_in_front()
+            || self.interact_door_in_front();
     }
 
     fn bump_interact(&mut self, next: Tile) {
@@ -1055,8 +1118,9 @@ impl Game {
             self.open_fountain(index);
             return;
         }
-        self.interact_switch_in_front();
-        self.interact_plate_in_front();
+        if self.interact_switch_in_front() || self.interact_plate_in_front() {
+            return;
+        }
         let chest = self
             .map
             .object_index_at_tile("chest", next)
@@ -1073,13 +1137,12 @@ impl Game {
             self.open_fake_chest(index);
             return;
         }
-        self.interact_script_in_front();
-        self.interact_door_in_front();
+        let _handled = self.interact_script_in_front() || self.interact_door_in_front();
     }
 
-    fn interact_switch_in_front(&mut self) {
+    fn interact_switch_in_front(&mut self) -> bool {
         let Some(index) = self.map.object_in_front(self.player.pos, &self.player.facing, "switch") else {
-            return;
+            return false;
         };
         let message = if self.switches.get(index).copied().unwrap_or(false) {
             "The switch is currently on, flip it?"
@@ -1087,37 +1150,41 @@ impl Game {
             "The switch is currently off, flip it?"
         };
         self.show_options(message, &["yes", "no"], &format!("switch:{index}"));
+        true
     }
 
-    fn interact_plate_in_front(&mut self) {
+    fn interact_plate_in_front(&mut self) -> bool {
         let Some(index) = self.map.object_in_front(self.player.pos, &self.player.facing, "pressurePlate") else {
-            return;
+            return false;
         };
         if self.plates.get(index).copied().unwrap_or(false) {
-            return;
+            return false;
         }
         self.show_options(
             "Step on the pressure plate?",
             &["yes", "no"],
             &format!("pressure_plate:{index}"),
         );
+        true
     }
 
-    fn interact_script_in_front(&mut self) {
+    fn interact_script_in_front(&mut self) -> bool {
         let name = self.map.objects_named_prefix("script:").into_iter()
             .find(|obj| self.object_is_in_front(obj))
             .map(|obj| obj.name.trim_start_matches("script:").to_string());
         if let Some(name) = name {
             self.run_script(&name);
+            return true;
         }
+        false
     }
 
-    fn interact_door_in_front(&mut self) {
+    fn interact_door_in_front(&mut self) -> bool {
         let Some(door) = self.map.object_named("door") else {
-            return;
+            return false;
         };
         if !self.object_is_in_front(door) {
-            return;
+            return false;
         }
         let message = if self.map_index + 1 >= config::MAP_FILES.len() {
             "The final door needs a key. Give the key?"
@@ -1125,6 +1192,7 @@ impl Game {
             "The door is locked. Give the key?"
         };
         self.show_options(message, &["give", "not give"], "door");
+        true
     }
 
     fn open_fountain(&mut self, _index: usize) {
@@ -1206,7 +1274,10 @@ impl Game {
             self.active_run = false;
             return;
         }
-        self.transition = Some((0.0, true, self.map_index + 1));
+        self.transition = Some(MapTransition::FadeOut {
+            elapsed: 0.0,
+            target: self.map_index + 1,
+        });
     }
 
     fn handle_inventory_keys(&mut self, pressed: &[KeyCode]) {
@@ -1422,6 +1493,9 @@ impl Game {
         if self.cli.debug {
             self.draw_debug();
         }
+        if self.help_open {
+            self.draw_help();
+        }
     }
 
     fn draw_debug(&self) {
@@ -1486,7 +1560,7 @@ impl Game {
         draw_rectangle_lines(left, top, box_w, box_h, 2.0, INV_ACCENT_COLOR);
         draw_text_at("CONFIG EDITOR", left + pad, top + 28.0, 18, INV_ACCENT_COLOR,
             &self.assets.font, 0.0, 0.5);
-        draw_text_at("UP/DOWN select   ENTER edit   ESC close", left + pad, top + 52.0,
+        draw_text_at("UP/DOWN select   ENTER edit   R reset   A reset all   ESC close", left + pad, top + 52.0,
             11, MENU_MUTED_TEXT, &self.assets.font, 0.0, 0.5);
 
         let count = keys.len();
@@ -1518,6 +1592,33 @@ impl Game {
         if !footer.is_empty() {
             draw_text_at(&footer, left + pad, top + box_h - 22.0, 12, INV_ACCENT_COLOR,
                 &self.assets.font, 0.0, 0.5);
+        }
+    }
+
+    fn draw_help(&self) {
+        let rows = [
+            "CONTROLS",
+            "WASD move   E/Enter interact   Z attack",
+            "I inventory   Tab switch inventory/equipment",
+            "Arrow keys navigate menus and inventory",
+            "H spawn a nearby enemy",
+            "F1 toggle this help   Esc/Enter close",
+            "M minimize debug   E edit config while expanded",
+            "R reset selected config   A reset all config",
+            "1-6 choose save slot   S Settings in menu",
+        ];
+        let box_w = (screen_width() - 80.0).min(620.0);
+        let box_h = rows.len() as f32 * 22.0 + 46.0;
+        let left = (screen_width() - box_w) / 2.0;
+        let top = (screen_height() - box_h) / 2.0;
+        draw_rectangle(0.0, 0.0, screen_width(), screen_height(), INV_DIM_COLOR);
+        draw_rectangle(left, top, box_w, box_h, PANEL_COLOR);
+        draw_rectangle_lines(left, top, box_w, box_h, 2.0, INV_ACCENT_COLOR);
+        for (index, row) in rows.iter().enumerate() {
+            let color = if index == 0 { INV_ACCENT_COLOR } else { TEXT_COLOR };
+            let size = if index == 0 { 20 } else { 12 };
+            draw_text_at(row, left + 20.0, top + 34.0 + index as f32 * 22.0,
+                size, color, &self.assets.font, 0.0, 0.5);
         }
     }
 
@@ -1602,9 +1703,14 @@ impl Game {
         }
         self.draw_dialogue();
         self.draw_options();
-        if let Some((timer, out, _)) = self.transition {
-            let progress = (timer / crate::config::get().transition_duration).clamp(0.0, 1.0);
-            let alpha = if out { progress } else { 1.0 - progress };
+        if let Some(transition) = self.transition {
+            let duration = crate::config::get().transition_duration.max(f32::EPSILON);
+            let (elapsed, fading_out) = match transition {
+                MapTransition::FadeOut { elapsed, .. } => (elapsed, true),
+                MapTransition::FadeIn { elapsed } => (elapsed, false),
+            };
+            let progress = (elapsed / duration).clamp(0.0, 1.0);
+            let alpha = if fading_out { progress } else { 1.0 - progress };
             draw_rectangle(0.0, 0.0, screen_width(), screen_height(), Color::new(0.0, 0.0, 0.0, alpha));
         }
     }
@@ -2729,5 +2835,28 @@ mod tests {
         let blocked = blocked_tiles_for(&map, false);
         assert!(blocked.contains(&Tile(15, 13)));
         assert!(blocked.contains(&Tile(16, 9)));
+    }
+
+    #[test]
+    fn map_transition_swaps_when_fade_out_finishes() {
+        let mut transition = Some(MapTransition::FadeOut {
+            elapsed: 0.0,
+            target: 2,
+        });
+        assert_eq!(Game::advance_transition(&mut transition, 0.4, 1.0), None);
+        assert_eq!(
+            transition,
+            Some(MapTransition::FadeOut {
+                elapsed: 0.4,
+                target: 2,
+            })
+        );
+        assert_eq!(Game::advance_transition(&mut transition, 0.6, 1.0), Some(2));
+        assert_eq!(transition, Some(MapTransition::FadeIn { elapsed: 0.0 }));
+
+        assert_eq!(Game::advance_transition(&mut transition, 0.5, 1.0), None);
+        assert_eq!(transition, Some(MapTransition::FadeIn { elapsed: 0.5 }));
+        assert_eq!(Game::advance_transition(&mut transition, 0.5, 1.0), None);
+        assert_eq!(transition, None);
     }
 }
