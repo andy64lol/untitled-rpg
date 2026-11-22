@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -243,7 +244,7 @@ impl MapData {
             .iter()
             .filter(|o| o.name.starts_with(prefix))
             .collect();
-        result.sort_by(|a, b| a.name.cmp(&b.name));
+        result.sort_by(|a, b| natural_cmp(&a.name, &b.name));
         result
     }
 
@@ -353,6 +354,44 @@ fn snap_center(value: f32, tile_size: f32) -> f32 {
     ((value - tile_size / 2.0) / tile_size).round() * tile_size + tile_size / 2.0
 }
 
+fn natural_cmp(a: &str, b: &str) -> Ordering {
+    let left = a.as_bytes();
+    let right = b.as_bytes();
+    let (mut i, mut j) = (0, 0);
+    while i < left.len() && j < right.len() {
+        if left[i].is_ascii_digit() && right[j].is_ascii_digit() {
+            let left_start = i;
+            while i < left.len() && left[i].is_ascii_digit() {
+                i += 1;
+            }
+            let right_start = j;
+            while j < right.len() && right[j].is_ascii_digit() {
+                j += 1;
+            }
+            let left_number = std::str::from_utf8(&left[left_start..i])
+                .unwrap_or("0")
+                .parse::<u64>()
+                .unwrap_or(u64::MAX);
+            let right_number = std::str::from_utf8(&right[right_start..j])
+                .unwrap_or("0")
+                .parse::<u64>()
+                .unwrap_or(u64::MAX);
+            match left_number.cmp(&right_number) {
+                Ordering::Equal => continue,
+                ordering => return ordering,
+            }
+        }
+        match left[i].cmp(&right[j]) {
+            Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
+            ordering => return ordering,
+        }
+    }
+    left.len().cmp(&right.len())
+}
+
 fn object_tile(x: f32, y: f32, tile_width: f32, tile_height: f32) -> Tile {
     Tile((x / tile_width).floor() as i32, (y / tile_height).floor() as i32)
 }
@@ -439,6 +478,23 @@ mod tests {
         assert!(!map.is_solid(Tile(15, 13)));
         assert_eq!(map.tile_of(vec2(464.0, 432.0)), Tile(14, 13));
         assert_eq!(map.object_in_front(vec2(464.0, 432.0), "right", "chest"), Some(index));
+    }
+
+    #[test]
+    fn object_names_sort_naturally() {
+        assert_eq!(natural_cmp("spawnEnemy2", "spawnEnemy10"), Ordering::Less);
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("maps")
+            .join("map5.tmx");
+        let map = MapData::load(&path);
+        let markers = map.objects_named_prefix("spawnEnemy");
+        assert_eq!(markers[0].name, "spawnEnemy1");
+        assert_eq!(markers[1].name, "spawnEnemy2");
+        assert_eq!(markers[9].name, "spawnEnemy10");
+        assert_eq!(markers[22].name, "spawnEnemy23");
+        assert!((markers[22].x - 336.0).abs() < 1.0);
+        assert!((markers[22].y - 208.0).abs() < 1.0);
     }
 
     #[test]

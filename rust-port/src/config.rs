@@ -26,6 +26,18 @@ pub const INTERACTION_DISTANCE: f32 = 40.0;
 pub const BASE_ATTACK: i32 = 1;
 pub const BASE_DEFENSE: i32 = 1;
 
+pub const CHEST_REWARD_IDS: [&str; 9] = [
+    "apple",
+    "pear",
+    "banana",
+    "bronze_sword",
+    "iron_sword",
+    "rusty_iron_sword",
+    "stainless_steel_shield",
+    "leather_armour",
+    "titanium_sword",
+];
+
 pub const SWING_ANGLE_DEGREES: f32 = 5.0;
 pub const SWING_SPEED: f32 = 10.0;
 pub const SWING_EASE: f32 = 15.0;
@@ -34,8 +46,7 @@ pub const DAMAGE_FLASH_DURATION: f32 = 0.25;
 pub const DAMAGE_NUMBER_LIFETIME: f32 = 0.9;
 pub const DAMAGE_NUMBER_RISE: f32 = 55.0;
 pub const ENEMY_DEATH_DURATION: f32 = 0.45;
-pub const ENEMY_SPAWN_DELAY: f32 = 1.0;
-pub const ENEMY_SPAWN_IDLE: f32 = 2.0;
+pub const ENEMY_SPAWN_DISTANCE_TILES: f32 = 2.0;
 pub const DEATH_ANIMATION_DURATION: f32 = 0.6;
 pub const DEATH_SCREEN_DELAY: f32 = 5.0;
 pub const DEATH_TITLE: &str = "YOU DIED";
@@ -116,8 +127,8 @@ pub const MENU_BACKGROUND: Color = Color::new(10.0 / 255.0, 12.0 / 255.0, 20.0 /
 static RUNTIME: AtomicPtr<RuntimeConfig> = AtomicPtr::new(ptr::null_mut());
 static ORIGINAL: AtomicPtr<RuntimeConfig> = AtomicPtr::new(ptr::null_mut());
 
-fn default_enemy_spawn_idle() -> f32 {
-    ENEMY_SPAWN_IDLE
+fn default_enemy_spawn_distance_tiles() -> f32 {
+    ENEMY_SPAWN_DISTANCE_TILES
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -191,9 +202,8 @@ pub struct RuntimeConfig {
     pub spike_damage: i32,
     pub spike_cooldown: f32,
     pub enemy_damage_cooldown: f32,
-    pub enemy_spawn_delay: f32,
-    #[serde(default = "default_enemy_spawn_idle")]
-    pub enemy_spawn_idle: f32,
+    #[serde(default = "default_enemy_spawn_distance_tiles")]
+    pub enemy_spawn_distance_tiles: f32,
     pub death_title: String,
     pub death_message: String,
     pub death_hint: String,
@@ -274,8 +284,7 @@ impl Default for RuntimeConfig {
             spike_damage: SPIKE_DAMAGE,
             spike_cooldown: SPIKE_COOLDOWN,
             enemy_damage_cooldown: ENEMY_DAMAGE_COOLDOWN,
-            enemy_spawn_delay: ENEMY_SPAWN_DELAY,
-            enemy_spawn_idle: ENEMY_SPAWN_IDLE,
+            enemy_spawn_distance_tiles: ENEMY_SPAWN_DISTANCE_TILES,
             death_title: DEATH_TITLE.into(),
             death_message: DEATH_MESSAGE.into(),
             death_hint: DEATH_HINT.into(),
@@ -493,8 +502,7 @@ impl RuntimeConfig {
             "spike_damage" => number!(spike_damage, i32),
             "spike_cooldown" => number!(spike_cooldown, f32),
             "enemy_damage_cooldown" => number!(enemy_damage_cooldown, f32),
-            "enemy_spawn_delay" => number!(enemy_spawn_delay, f32),
-            "enemy_spawn_idle" => number!(enemy_spawn_idle, f32),
+            "enemy_spawn_distance_tiles" => number!(enemy_spawn_distance_tiles, f32),
             "death_title" => text!(death_title),
             "death_message" => text!(death_message),
             "death_hint" => text!(death_hint),
@@ -513,14 +521,11 @@ mod tests {
     #[test]
     fn runtime_config_set_rejects_invalid_values() {
         let mut config = RuntimeConfig::default();
-        assert!(config.set("enemy_spawn_delay", "0.5"));
-        assert!(!config.set("enemy_spawn_delay", "soon"));
-        assert!(config.set("enemy_spawn_idle", "0.25"));
-        assert!(!config.set("enemy_spawn_idle", "idle"));
+        assert!(config.set("enemy_spawn_distance_tiles", "3.5"));
+        assert!(!config.set("enemy_spawn_distance_tiles", "soon"));
         assert!(config.set("death_title", "GAME OVER"));
         assert!(!config.set("missing_key", "1"));
-        assert_eq!(config.enemy_spawn_delay, 0.5);
-        assert_eq!(config.enemy_spawn_idle, 0.25);
+        assert_eq!(config.enemy_spawn_distance_tiles, 3.5);
         assert_eq!(config.death_title, "GAME OVER");
     }
 
@@ -528,14 +533,14 @@ mod tests {
     fn runtime_config_parses_overrides() {
         let mut config = RuntimeConfig::default();
         config.set("spike_cooldown", "0.9");
-        config.set("enemy_spawn_delay", "3.5");
+        config.set("enemy_spawn_distance_tiles", "3.5");
         config.set("death_title", "GAME OVER");
         config.set("light_ray_count", "128");
         config.set("player_ray_count", "7");
         config.set("room_fade_tiles", "6");
         config.set("unknown", "ignored");
         assert_eq!(config.spike_cooldown, 0.9);
-        assert_eq!(config.enemy_spawn_delay, 3.5);
+        assert_eq!(config.enemy_spawn_distance_tiles, 3.5);
         assert_eq!(config.death_title, "GAME OVER");
         assert_eq!(config.spike_damage, SPIKE_DAMAGE);
         assert_eq!(config.light_ray_count, 128);

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use macroquad::prelude::*;
 use serde::Deserialize;
@@ -24,7 +24,10 @@ struct MobJson {
     textures: Option<String>,
     name: Option<String>,
     speed: Option<f32>,
+    attack: Option<i32>,
     damage: Option<i32>,
+    defense: Option<i32>,
+    hp: Option<i32>,
     damage_speed: Option<f32>,
     #[serde(default)]
     frames: MobFramesJson,
@@ -57,7 +60,10 @@ struct EnemyStatsJson {
     id: Option<String>,
     name: Option<String>,
     speed: Option<f32>,
+    attack: Option<i32>,
     damage: Option<i32>,
+    defense: Option<i32>,
+    hp: Option<i32>,
     damage_speed: Option<f32>,
 }
 
@@ -102,7 +108,9 @@ pub struct MobType {
     pub columns: u32,
     pub frame_duration: f32,
     pub speed: f32,
-    pub damage: i32,
+    pub attack: i32,
+    pub defense: i32,
+    pub hp: i32,
     pub damage_speed: f32,
     walking: MobAnimation,
     defeat: MobAnimation,
@@ -112,6 +120,7 @@ pub struct MobType {
 pub struct Enemy {
     pub mob: String,
     pub pos: Vec2,
+    pub spawn: Vec2,
     pub target: Vec2,
     pub moving: bool,
     pub facing_x: f32,
@@ -127,18 +136,24 @@ pub struct Enemy {
     pub frame_timer: f32,
     pub dying: bool,
     pub death_timer: f32,
-    pub spawn_idle: f32,
+    pub hp: i32,
+    pub max_hp: i32,
+    pub hit_flash: f32,
     pub attack_timer: f32,
 }
 
 impl Enemy {
-    pub fn new(mob: &str, pos: Vec2, spawn_idle: f32) -> Self {
+    pub fn new(mob: &str, pos: Vec2, hp: i32) -> Self {
+        let hp = hp.max(1);
         Self {
             mob: mob.to_string(),
             pos,
+            spawn: pos,
             target: pos,
             moving: false,
-            spawn_idle: spawn_idle.max(0.0),
+            hp,
+            max_hp: hp,
+            hit_flash: 0.0,
             attack_timer: 0.0,
             facing_x: 1.0,
             swing_phase: 0.0,
@@ -169,16 +184,20 @@ impl Enemy {
         self.alpha = 1.0;
     }
 
-    pub fn is_idle(&self) -> bool {
-        self.spawn_idle > 0.0
-    }
-
-    fn tick_spawn_idle(&mut self, dt: f32) -> bool {
-        if self.spawn_idle <= 0.0 {
-            return false;
+    pub fn take_damage(&mut self, attack: i32, defense: i32) -> i32 {
+        if self.dying {
+            return 0;
         }
-        self.spawn_idle = (self.spawn_idle - dt).max(0.0);
-        true
+        let dealt = (attack - defense).max(0);
+        if dealt == 0 {
+            return 0;
+        }
+        self.hp = (self.hp - dealt).max(0);
+        self.hit_flash = crate::config::get().damage_flash_duration;
+        if self.hp == 0 {
+            self.die();
+        }
+        dealt
     }
 
     fn update_motion(&mut self, dt: f32, speed: f32) {
@@ -243,31 +262,42 @@ impl Enemy {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct EnemyHit {
+    pub index: usize,
+    pub attack: i32,
+    pub dealt: i32,
+    pub hp: i32,
+    pub max_hp: i32,
+    pub pos: Vec2,
+    pub mob: String,
+}
+
 pub struct EnemyManager {
     pub enemies: Vec<Enemy>,
     pub mobs: HashMap<String, MobType>,
     pub spawn_points: Vec<(f32, f32, String)>,
+    pub spawn_names: Vec<String>,
     pub armed: Vec<bool>,
     pub spawned: Vec<bool>,
-    pending: Vec<Option<f32>>,
     disabled: bool,
 }
 
 pub fn attack_cooldown(damage_speed: f32, fallback: f32) -> f32 {
     if damage_speed > 0.0 {
-        (1.0 / damage_speed).max(0.05)
+        (damage_speed / 10.0).max(0.05)
     } else {
         fallback.max(0.0)
     }
 }
 
-fn spawn_log_line(source: &str, id: &str, name: &str, pos: Vec2, index: usize, idle: f32) -> String {
+fn spawn_log_line(source: &str, id: &str, name: &str, pos: Vec2, index: usize) -> String {
     let tile = Tile(
         (pos.x / TILE_SIZE).floor() as i32,
         (pos.y / TILE_SIZE).floor() as i32,
     );
     format!(
-        "[spawn] {source} -> {id} ({name}) #{index} at ({:.0}, {:.0}) tile ({}, {}) idle={idle:.2}s",
+        "[spawn] {source} -> {id} ({name}) #{index} at ({:.0}, {:.0}) tile ({}, {})",
         pos.x, pos.y, tile.0, tile.1
     )
 }
@@ -276,6 +306,7 @@ impl EnemyManager {
     pub fn load(map: &MapData, assets: &Assets) -> Self {
         let mobs = load_mobs(assets);
         let mut spawn_points = Vec::new();
+        let mut spawn_names = Vec::new();
         for obj in map.objects_named_prefix("spawnEnemy") {
             let id = if !obj.user_type.is_empty() {
                 obj.user_type.clone()
@@ -283,15 +314,16 @@ impl EnemyManager {
                 "bat".into()
             };
             spawn_points.push((obj.x, obj.y, id));
+            spawn_names.push(obj.name.clone());
         }
         let len = spawn_points.len();
         Self {
             enemies: Vec::new(),
             mobs,
             spawn_points,
+            spawn_names,
             armed: vec![false; len],
             spawned: vec![false; len],
-            pending: vec![None; len],
             disabled: false,
         }
     }
@@ -300,18 +332,29 @@ impl EnemyManager {
         self.disabled = disabled;
         if disabled {
             self.enemies.clear();
-            self.clear_pending();
         }
+    }
+
+    pub fn occupied_tiles(&self, map: &MapData) -> HashSet<Tile> {
+        let mut tiles = HashSet::new();
+        if self.disabled {
+            return tiles;
+        }
+        for enemy in &self.enemies {
+            if enemy.dying {
+                continue;
+            }
+            tiles.insert(map.tile_of(enemy.pos));
+            if enemy.moving {
+                tiles.insert(map.tile_of(enemy.target));
+            }
+        }
+        tiles
     }
 
     pub fn reset_triggers(&mut self) {
         self.armed.iter_mut().for_each(|value| *value = false);
         self.spawned.iter_mut().for_each(|value| *value = false);
-        self.clear_pending();
-    }
-
-    fn clear_pending(&mut self) {
-        self.pending.iter_mut().for_each(|value| *value = None);
     }
 
     pub fn spawn(&mut self, id: &str, pos: Vec2) {
@@ -319,10 +362,14 @@ impl EnemyManager {
     }
 
     pub fn spawn_from(&mut self, source: &str, id: &str, pos: Vec2) {
-        self.spawn_from_with_idle(source, id, pos, crate::config::get().enemy_spawn_idle);
+        self.spawn_from_hp(source, id, pos, None);
     }
 
-    pub fn spawn_from_with_idle(&mut self, source: &str, id: &str, pos: Vec2, idle: f32) {
+    pub fn spawn_from_saved(&mut self, source: &str, id: &str, pos: Vec2, hp: i32) {
+        self.spawn_from_hp(source, id, pos, Some(hp));
+    }
+
+    fn spawn_from_hp(&mut self, source: &str, id: &str, pos: Vec2, hp: Option<i32>) {
         if self.disabled {
             return;
         }
@@ -330,10 +377,10 @@ impl EnemyManager {
         let Some(mob) = self.mobs.get(resolved).cloned() else {
             return;
         };
-        let idle = idle.max(0.0);
-        self.enemies.push(Enemy::new(resolved, pos, idle));
+        let hp = hp.filter(|value| *value > 0).unwrap_or(mob.hp);
+        self.enemies.push(Enemy::new(resolved, pos, hp));
         let index = self.enemies.len();
-        log_line(&spawn_log_line(source, resolved, &mob.name, pos, index, idle));
+        log_line(&spawn_log_line(source, resolved, &mob.name, pos, index));
     }
 
     pub fn spawn_at_marker(&mut self, source: &str, id: Option<&str>, near: Option<Vec2>) -> bool {
@@ -369,32 +416,43 @@ impl EnemyManager {
             .expect("spawn marker candidate");
         let (x, y, marker_id) = self.spawn_points[index].clone();
         let enemy_id = id.unwrap_or(&marker_id);
-        let source = format!("{source}:spawnEnemy{}", index + 1);
+        let marker = self.spawn_names.get(index).cloned()
+            .unwrap_or_else(|| format!("spawnEnemy{}", index + 1));
+        let source = format!("{source}:{marker}");
         self.spawn_from(&source, enemy_id, vec2(x, y));
         if !self.spawned[index] {
             self.spawned[index] = true;
         }
         self.armed[index] = false;
-        self.pending[index] = None;
         true
     }
 
-    pub fn attack_at(&mut self, pos: Vec2) -> bool {
+    pub fn attack_at(&mut self, pos: Vec2, attack: i32) -> Option<EnemyHit> {
         if self.disabled {
-            return false;
+            return None;
         }
-        for enemy in self.enemies.iter_mut() {
+        for (index, enemy) in self.enemies.iter_mut().enumerate() {
             if enemy.dying {
                 continue;
             }
             if (enemy.pos.x - pos.x).abs() <= TILE_SIZE
                 && (enemy.pos.y - pos.y).abs() <= TILE_SIZE
             {
-                enemy.die();
-                return true;
+                let mob = self.mobs.get(&enemy.mob);
+                let defense = mob.map_or(0, |mob| mob.defense);
+                let dealt = enemy.take_damage(attack, defense);
+                return Some(EnemyHit {
+                    index,
+                    attack,
+                    dealt,
+                    hp: enemy.hp,
+                    max_hp: enemy.max_hp,
+                    pos: enemy.pos,
+                    mob: enemy.mob.clone(),
+                });
             }
         }
-        false
+        None
     }
 
     pub fn contact_attack(&self, player_pos: Vec2) -> Option<(usize, i32, f32)> {
@@ -404,17 +462,16 @@ impl EnemyManager {
         let mut best: Option<(usize, i32, f32)> = None;
         for (index, enemy) in self.enemies.iter().enumerate() {
             if enemy.dying
-                || enemy.is_idle()
                 || enemy.attack_timer > 0.0
-                || (enemy.pos.x - player_pos.x).abs() >= TILE_SIZE
-                || (enemy.pos.y - player_pos.y).abs() >= TILE_SIZE
+                || (enemy.pos.x - player_pos.x).abs() > TILE_SIZE
+                || (enemy.pos.y - player_pos.y).abs() > TILE_SIZE
             {
                 continue;
             }
             let Some(mob) = self.mobs.get(&enemy.mob) else {
                 continue;
             };
-            let attack = (index, mob.damage, mob.damage_speed);
+            let attack = (index, mob.attack, mob.damage_speed);
             let better = match best {
                 Some((_, damage, speed)) => {
                     attack.1 > damage || (attack.1 == damage && attack.2 > speed)
@@ -440,6 +497,7 @@ impl EnemyManager {
         }
         let mut finished = Vec::new();
         for (index, enemy) in self.enemies.iter_mut().enumerate() {
+            enemy.hit_flash = (enemy.hit_flash - dt).max(0.0);
             if enemy.dying {
                 enemy.death_timer = (enemy.death_timer - dt).max(0.0);
                 let progress = 1.0 - enemy.death_timer / crate::config::get().enemy_death_duration;
@@ -461,20 +519,6 @@ impl EnemyManager {
                 continue;
             }
             enemy.attack_timer = (enemy.attack_timer - dt).max(0.0);
-            let was_idle = enemy.is_idle();
-            if enemy.tick_spawn_idle(dt) {
-                continue;
-            }
-            if was_idle {
-                let tile = Tile(
-                    (enemy.pos.x / TILE_SIZE).floor() as i32,
-                    (enemy.pos.y / TILE_SIZE).floor() as i32,
-                );
-                log_line(&format!(
-                    "[spawn] enemy #{index} AI active at tile ({}, {})",
-                    tile.0, tile.1
-                ));
-            }
             let speed = self.mobs.get(&enemy.mob).map(|m| m.speed).unwrap_or(160.0);
             let duration = self.mobs.get(&enemy.mob).map(|m| m.frame_duration).unwrap_or(0.1);
             enemy.update_swing(dt);
@@ -532,7 +576,7 @@ impl EnemyManager {
         }
 
         for enemy in self.enemies.iter_mut() {
-            if enemy.dying || enemy.moving || enemy.is_idle() {
+            if enemy.dying || enemy.moving {
                 continue;
             }
             let from = map.tile_of(enemy.pos);
@@ -543,7 +587,7 @@ impl EnemyManager {
             let mut best: Option<(i32, Tile)> = None;
             for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
                 let next = Tile(from.0 + dx, from.1 + dy);
-                if !map.in_bounds(next) {
+                if !map.in_bounds(next) || next == player_tile {
                     continue;
                 }
                 let candidate = distance[next.1 as usize][next.0 as usize];
@@ -560,17 +604,18 @@ impl EnemyManager {
         }
     }
 
-    pub fn update_triggers(&mut self, dt: f32, player_tile: Tile, map: &MapData) {
+    pub fn update_triggers(&mut self, player_tile: Tile, map: &MapData) {
         if self.disabled {
             return;
         }
-        let delay = crate::config::get().enemy_spawn_delay;
+        let threshold = crate::config::get().enemy_spawn_distance_tiles.max(0.0);
         for index in 0..self.spawn_points.len() {
             if self.spawned[index] {
                 continue;
             }
             let (x, y, id) = self.spawn_points[index].clone();
-            let marker = format!("spawnEnemy{}", index + 1);
+            let marker = self.spawn_names.get(index).cloned()
+                .unwrap_or_else(|| format!("spawnEnemy{}", index + 1));
             let tile = map.tile_of(vec2(x, y));
             if player_tile == tile {
                 if !self.armed[index] {
@@ -580,22 +625,24 @@ impl EnemyManager {
                     ));
                 }
                 self.armed[index] = true;
-                self.pending[index] = None;
-            } else if self.armed[index] {
-                self.armed[index] = false;
-                self.pending[index] = Some(delay);
-                log_line(&format!(
-                    "[spawn] {marker} left tile ({}, {}); spawning in {delay:.2}s",
-                    tile.0, tile.1
-                ));
-            } else if let Some(timer) = self.pending[index].as_mut() {
-                *timer -= dt;
-                if *timer <= 0.0 {
-                    self.pending[index] = None;
-                    self.spawned[index] = true;
-                    self.spawn_from(&format!("trigger:{marker}"), &id, vec2(x, y));
-                }
+                continue;
             }
+            if !self.armed[index] {
+                continue;
+            }
+            let distance = (((player_tile.0 - tile.0) as f32).powi(2)
+                + ((player_tile.1 - tile.1) as f32).powi(2))
+                .sqrt();
+            if distance < threshold {
+                continue;
+            }
+            self.armed[index] = false;
+            self.spawned[index] = true;
+            log_line(&format!(
+                "[spawn] {marker} player {distance:.1} tiles from tile ({}, {}); spawning",
+                tile.0, tile.1
+            ));
+            self.spawn_from(&format!("trigger:{marker}"), &id, vec2(x, y));
         }
     }
 
@@ -617,11 +664,14 @@ impl EnemyManager {
             let w = mob.frame_size.x * enemy.scale_x.abs();
             let h = mob.frame_size.y * enemy.scale_y;
             let alpha = (enemy.alpha * 255.0) as u8;
+            let flash = (enemy.hit_flash / crate::config::get().damage_flash_duration.max(0.001))
+                .clamp(0.0, 1.0);
+            let tint = 0.35 + 0.65 * (1.0 - flash);
             draw_texture_ex(
                 texture,
                 enemy.pos.x - w / 2.0,
                 enemy.pos.y - h / 2.0,
-                Color::new(1.0, 1.0, 1.0, alpha as f32 / 255.0),
+                Color::new(1.0, tint, tint, alpha as f32 / 255.0),
                 DrawTextureParams {
                     source: Some(Rect::new(sx, sy, mob.frame_size.x, mob.frame_size.y)),
                     dest_size: Some(vec2(w, h)),
@@ -670,19 +720,30 @@ fn load_mobs(assets: &Assets) -> HashMap<String, MobType> {
         let walking = parse_animation(json.animations.get("walking"), frame_count, None);
         let defeat = parse_animation(json.animations.get("defeat"), frame_count, Some(vec![0]));
 
+        let entry = stats.get(&id);
         let name = json.name.clone()
-            .or_else(|| stats.get(&id).and_then(|s| s.name.clone()))
+            .or_else(|| entry.and_then(|s| s.name.clone()))
             .unwrap_or_else(|| title_case(&id));
+        let attack = json.attack.or(json.damage)
+            .or_else(|| entry.and_then(|s| s.attack.or(s.damage)))
+            .unwrap_or(0);
+        let defense = json.defense
+            .or_else(|| entry.and_then(|s| s.defense))
+            .unwrap_or(0);
+        let hp = json.hp
+            .or_else(|| entry.and_then(|s| s.hp))
+            .unwrap_or(1);
         result.insert(id.clone(), MobType {
             name,
             texture_name,
             frame_size,
             columns: json.frames.frame_columns,
             frame_duration: json.frames.frame_duration,
-            speed: json.speed.or_else(|| stats.get(&id).and_then(|s| s.speed)).unwrap_or(160.0),
-            damage: json.damage.or_else(|| stats.get(&id).and_then(|s| s.damage)).unwrap_or(0),
-            damage_speed: stats
-                .get(&id)
+            speed: json.speed.or_else(|| entry.and_then(|s| s.speed)).unwrap_or(160.0),
+            attack,
+            defense,
+            hp,
+            damage_speed: entry
                 .and_then(|s| s.damage_speed)
                 .or(json.damage_speed)
                 .unwrap_or(1.0),
@@ -725,15 +786,60 @@ mod tests {
             enemies: Vec::new(),
             mobs: HashMap::new(),
             spawn_points: Vec::new(),
+            spawn_names: Vec::new(),
             armed: Vec::new(),
             spawned: Vec::new(),
-            pending: Vec::new(),
             disabled: false,
         };
-        manager.enemies.push(Enemy::new("bat", vec2(112.0, 112.0), 0.0));
+        manager.enemies.push(Enemy::new("bat", vec2(112.0, 112.0), 10));
         manager.step_toward_player(vec2(224.0, 112.0), &empty_map());
         assert!(manager.enemies[0].moving);
         assert_eq!(manager.enemies[0].target, vec2(144.0, 112.0));
+    }
+
+    #[test]
+    fn enemy_does_not_walk_onto_player_tile() {
+        let mut manager = EnemyManager {
+            enemies: Vec::new(),
+            mobs: HashMap::new(),
+            spawn_points: Vec::new(),
+            spawn_names: Vec::new(),
+            armed: Vec::new(),
+            spawned: Vec::new(),
+            disabled: false,
+        };
+        let player_pos = vec2(144.0, 112.0);
+        manager.enemies.push(Enemy::new("bat", vec2(112.0, 112.0), 10));
+        manager.step_toward_player(player_pos, &empty_map());
+        assert!(!manager.enemies[0].moving);
+        assert_ne!(manager.enemies[0].target, player_pos);
+    }
+
+    #[test]
+    fn live_enemies_occupy_tiles_for_player_collision() {
+        let mut manager = EnemyManager {
+            enemies: Vec::new(),
+            mobs: HashMap::new(),
+            spawn_points: Vec::new(),
+            spawn_names: Vec::new(),
+            armed: Vec::new(),
+            spawned: Vec::new(),
+            disabled: false,
+        };
+        let map = empty_map();
+        manager.enemies.push(Enemy::new("bat", vec2(112.0, 112.0), 10));
+
+        let tiles = manager.occupied_tiles(&map);
+        assert!(tiles.contains(&Tile(3, 3)));
+
+        manager.enemies[0].moving = true;
+        manager.enemies[0].target = vec2(144.0, 112.0);
+        let tiles = manager.occupied_tiles(&map);
+        assert!(tiles.contains(&Tile(3, 3)));
+        assert!(tiles.contains(&Tile(4, 3)));
+
+        manager.enemies[0].dying = true;
+        assert!(manager.occupied_tiles(&map).is_empty());
     }
 
     #[test]
@@ -745,12 +851,12 @@ mod tests {
             enemies: Vec::new(),
             mobs: HashMap::new(),
             spawn_points: Vec::new(),
+            spawn_names: Vec::new(),
             armed: Vec::new(),
             spawned: Vec::new(),
-            pending: Vec::new(),
             disabled: false,
         };
-        manager.enemies.push(Enemy::new("snake", MapData::center_of(Tile(2, 2)), 0.0));
+        manager.enemies.push(Enemy::new("snake", MapData::center_of(Tile(2, 2)), 15));
         manager.step_toward_player(MapData::center_of(Tile(5, 5)), &map);
         let enemy = &manager.enemies[0];
         assert!(enemy.moving);
@@ -766,17 +872,17 @@ mod tests {
             enemies: Vec::new(),
             mobs: HashMap::new(),
             spawn_points: vec![(80.0, 80.0, "bat".into())],
+            spawn_names: vec!["spawnEnemy1".into()],
             armed: vec![false],
             spawned: vec![false],
-            pending: vec![None],
             disabled: false,
         };
-        manager.update_triggers(0.016, Tile(2, 2), &empty_map());
+        manager.update_triggers(Tile(2, 2), &empty_map());
         assert!(manager.armed[0]);
     }
 
     #[test]
-    fn spawn_waits_until_delay_after_player_leaves() {
+    fn spawn_triggers_two_tiles_after_player_leaves() {
         let animation = MobAnimation { frames: vec![0], looped: true };
         let mob = MobType {
             name: "Bat".into(),
@@ -785,7 +891,9 @@ mod tests {
             columns: 1,
             frame_duration: 0.1,
             speed: 160.0,
-            damage: 10,
+            attack: 10,
+            defense: 0,
+            hp: 10,
             damage_speed: 10.0,
             walking: animation.clone(),
             defeat: animation,
@@ -794,20 +902,18 @@ mod tests {
             enemies: Vec::new(),
             mobs: HashMap::new(),
             spawn_points: vec![(80.0, 80.0, "bat".into())],
+            spawn_names: vec!["spawnEnemy1".into()],
             armed: vec![false],
             spawned: vec![false],
-            pending: vec![None],
             disabled: false,
         };
         manager.mobs.insert("bat".into(), mob);
 
-        manager.update_triggers(0.016, Tile(2, 2), &empty_map());
+        manager.update_triggers(Tile(2, 2), &empty_map());
         assert!(manager.armed[0]);
-        manager.update_triggers(0.016, Tile(3, 2), &empty_map());
+        manager.update_triggers(Tile(3, 2), &empty_map());
         assert!(manager.enemies.is_empty());
-        manager.update_triggers(0.4, Tile(3, 2), &empty_map());
-        assert!(manager.enemies.is_empty());
-        manager.update_triggers(0.7, Tile(3, 2), &empty_map());
+        manager.update_triggers(Tile(4, 2), &empty_map());
         assert_eq!(manager.enemies.len(), 1);
         assert!(manager.spawned[0]);
     }
@@ -822,7 +928,9 @@ mod tests {
             columns: 1,
             frame_duration: 0.1,
             speed: 160.0,
-            damage: 10,
+            attack: 10,
+            defense: 0,
+            hp: 10,
             damage_speed: 10.0,
             walking: animation.clone(),
             defeat: animation,
@@ -834,9 +942,9 @@ mod tests {
                 (80.0, 80.0, "bat".into()),
                 (240.0, 240.0, "bat".into()),
             ],
+            spawn_names: vec!["spawnEnemy1".into(), "spawnEnemy2".into()],
             armed: vec![false, false],
             spawned: vec![false, false],
-            pending: vec![None, None],
             disabled: false,
         };
         manager.mobs.insert("bat".into(), mob);
@@ -852,7 +960,7 @@ mod tests {
     }
 
     #[test]
-    fn returning_to_trigger_cancels_pending_spawn() {
+    fn returning_to_trigger_keeps_it_armed() {
         let animation = MobAnimation { frames: vec![0], looped: true };
         let mob = MobType {
             name: "Bat".into(),
@@ -861,7 +969,9 @@ mod tests {
             columns: 1,
             frame_duration: 0.1,
             speed: 160.0,
-            damage: 10,
+            attack: 10,
+            defense: 0,
+            hp: 10,
             damage_speed: 10.0,
             walking: animation.clone(),
             defeat: animation,
@@ -870,21 +980,19 @@ mod tests {
             enemies: Vec::new(),
             mobs: HashMap::new(),
             spawn_points: vec![(80.0, 80.0, "bat".into())],
+            spawn_names: vec!["spawnEnemy1".into()],
             armed: vec![false],
             spawned: vec![false],
-            pending: vec![None],
             disabled: false,
         };
         manager.mobs.insert("bat".into(), mob);
 
-        manager.update_triggers(0.016, Tile(2, 2), &empty_map());
-        manager.update_triggers(0.016, Tile(3, 2), &empty_map());
-        manager.update_triggers(0.9, Tile(3, 2), &empty_map());
-        manager.update_triggers(0.016, Tile(2, 2), &empty_map());
-        manager.update_triggers(0.016, Tile(3, 2), &empty_map());
-        manager.update_triggers(0.9, Tile(3, 2), &empty_map());
+        manager.update_triggers(Tile(2, 2), &empty_map());
+        manager.update_triggers(Tile(3, 2), &empty_map());
         assert!(manager.enemies.is_empty());
-        manager.update_triggers(0.2, Tile(3, 2), &empty_map());
+        manager.update_triggers(Tile(2, 2), &empty_map());
+        assert!(manager.armed[0]);
+        manager.update_triggers(Tile(4, 2), &empty_map());
         assert_eq!(manager.enemies.len(), 1);
     }
 
@@ -894,19 +1002,19 @@ mod tests {
             enemies: Vec::new(),
             mobs: HashMap::new(),
             spawn_points: vec![(80.0, 80.0, "bat".into())],
+            spawn_names: vec!["spawnEnemy1".into()],
             armed: vec![false],
             spawned: vec![false],
-            pending: vec![None],
             disabled: false,
         };
         manager.set_disabled(true);
         manager.spawn("bat", vec2(80.0, 80.0));
         assert!(!manager.spawn_at_marker("debug", None, Some(vec2(80.0, 80.0))));
-        manager.update_triggers(0.016, Tile(2, 2), &empty_map());
+        manager.update_triggers(Tile(2, 2), &empty_map());
         assert!(manager.enemies.is_empty());
         assert!(manager.spawned.iter().all(|value| !*value));
         assert_eq!(manager.contact_attack(vec2(80.0, 80.0)), None);
-        assert!(!manager.attack_at(vec2(80.0, 80.0)));
+        assert!(manager.attack_at(vec2(80.0, 80.0), 10).is_none());
         manager.update(0.5);
         manager.step_toward_player(vec2(0.0, 0.0), &empty_map());
         assert!(manager.enemies.is_empty());
@@ -931,7 +1039,9 @@ mod tests {
             columns: 1,
             frame_duration: 0.1,
             speed: 160.0,
-            damage: 10,
+            attack: 10,
+            defense: 0,
+            hp: 10,
             damage_speed: 10.0,
             walking: animation.clone(),
             defeat: animation,
@@ -940,14 +1050,15 @@ mod tests {
             enemies: Vec::new(),
             mobs: HashMap::new(),
             spawn_points: Vec::new(),
+            spawn_names: Vec::new(),
             armed: Vec::new(),
             spawned: Vec::new(),
-            pending: Vec::new(),
             disabled: false,
         };
         manager.mobs.insert("bat".into(), mob);
-        manager.enemies.push(Enemy::new("bat", vec2(48.0, 48.0), 0.0));
+        manager.enemies.push(Enemy::new("bat", vec2(48.0, 48.0), 10));
         assert_eq!(manager.contact_attack(vec2(64.0, 48.0)), Some((0, 10, 10.0)));
+        assert_eq!(manager.contact_attack(vec2(80.0, 48.0)), Some((0, 10, 10.0)));
         assert_eq!(manager.contact_attack(vec2(200.0, 48.0)), None);
     }
 
@@ -959,11 +1070,10 @@ mod tests {
             "Bat",
             vec2(400.0, 432.0),
             7,
-            2.0,
         );
         assert_eq!(
             line,
-            "[spawn] trigger:spawnEnemy3 -> bat (Bat) #7 at (400, 432) tile (12, 13) idle=2.00s"
+            "[spawn] trigger:spawnEnemy3 -> bat (Bat) #7 at (400, 432) tile (12, 13)"
         );
     }
 
@@ -976,7 +1086,9 @@ mod tests {
             columns: 1,
             frame_duration: 0.1,
             speed: 160.0,
-            damage: 10,
+            attack: 10,
+            defense: 0,
+            hp: 10,
             damage_speed: 10.0,
             walking: animation.clone(),
             defeat: animation,
@@ -984,30 +1096,22 @@ mod tests {
     }
 
     #[test]
-    fn spawn_idle_keeps_enemy_on_marker_until_ai_starts() {
+    fn spawned_enemy_starts_at_marker_and_moves_immediately() {
         let mut manager = EnemyManager {
             enemies: Vec::new(),
             mobs: HashMap::new(),
             spawn_points: Vec::new(),
+            spawn_names: Vec::new(),
             armed: Vec::new(),
             spawned: Vec::new(),
-            pending: Vec::new(),
             disabled: false,
         };
         manager.mobs.insert("bat".into(), bat_mob());
         let spawn = vec2(112.0, 112.0);
-        manager.spawn_from_with_idle("test", "bat", spawn, 1.0);
-        assert!(manager.enemies[0].is_idle());
+        manager.spawn_from("test", "bat", spawn);
         assert_eq!(manager.enemies[0].pos, spawn);
+        assert_eq!(manager.enemies[0].spawn, spawn);
 
-        manager.step_toward_player(vec2(240.0, 112.0), &empty_map());
-        manager.update(0.5);
-        assert_eq!(manager.enemies[0].pos, spawn);
-        assert!(!manager.enemies[0].moving);
-        assert_eq!(manager.contact_attack(spawn), None);
-
-        manager.update(0.5);
-        assert!(!manager.enemies[0].is_idle());
         manager.step_toward_player(vec2(240.0, 112.0), &empty_map());
         manager.update(0.1);
         assert!(manager.enemies[0].pos.x > spawn.x);
@@ -1015,9 +1119,71 @@ mod tests {
 
     #[test]
     fn attack_cooldown_follows_damage_speed() {
-        assert!((attack_cooldown(10.0, 0.75) - 0.1).abs() < 1e-6);
-        assert!((attack_cooldown(5.0, 0.75) - 0.2).abs() < 1e-6);
+        assert!((attack_cooldown(10.0, 0.75) - 1.0).abs() < 1e-6);
+        assert!((attack_cooldown(20.0, 0.75) - 2.0).abs() < 1e-6);
+        assert!((attack_cooldown(7.0, 0.75) - 0.7).abs() < 1e-6);
         assert_eq!(attack_cooldown(0.0, 0.75), 0.75);
+    }
+
+    #[test]
+    fn enemy_take_damage_uses_defense_hp_and_flash() {
+        let pos = vec2(112.0, 112.0);
+        let mut manager = EnemyManager {
+            enemies: Vec::new(),
+            mobs: HashMap::new(),
+            spawn_points: Vec::new(),
+            spawn_names: Vec::new(),
+            armed: Vec::new(),
+            spawned: Vec::new(),
+            disabled: false,
+        };
+        manager.mobs.insert("bat".into(), bat_mob());
+        manager.spawn_from("test", "bat", pos);
+        let enemy = &mut manager.enemies[0];
+        assert_eq!(enemy.take_damage(3, 1), 2);
+        assert_eq!(enemy.hp, 8);
+        assert_eq!(enemy.max_hp, 10);
+        assert!(enemy.hit_flash > 0.0);
+        assert!(!enemy.dying);
+
+        manager.update(0.5);
+        assert_eq!(manager.enemies[0].hit_flash, 0.0);
+        assert_eq!(manager.enemies[0].take_damage(20, 1), 19);
+        assert_eq!(manager.enemies[0].hp, 0);
+        assert!(manager.enemies[0].dying);
+        assert_eq!(manager.enemies[0].take_damage(20, 1), 0);
+    }
+
+    #[test]
+    fn attack_at_applies_player_attack_and_enemy_defense() {
+        let mut manager = EnemyManager {
+            enemies: Vec::new(),
+            mobs: HashMap::new(),
+            spawn_points: Vec::new(),
+            spawn_names: Vec::new(),
+            armed: Vec::new(),
+            spawned: Vec::new(),
+            disabled: false,
+        };
+        let mut mob = bat_mob();
+        mob.defense = 1;
+        manager.mobs.insert("bat".into(), mob);
+        manager.spawn_from("test", "bat", vec2(112.0, 112.0));
+
+        let hit = manager.attack_at(vec2(112.0, 112.0), 5).expect("hit");
+        assert_eq!(hit.index, 0);
+        assert_eq!(hit.attack, 5);
+        assert_eq!(hit.dealt, 4);
+        assert_eq!(hit.hp, 6);
+        assert_eq!(hit.max_hp, 10);
+        assert_eq!(manager.enemies[0].hp, 6);
+        assert!(manager.enemies[0].hit_flash > 0.0);
+
+        let kill = manager.attack_at(vec2(112.0, 112.0), 20).expect("kill");
+        assert_eq!(kill.dealt, 19);
+        assert_eq!(kill.hp, 0);
+        assert!(manager.enemies[0].dying);
+        assert!(manager.attack_at(vec2(112.0, 112.0), 5).is_none());
     }
 
     #[test]
@@ -1026,14 +1192,14 @@ mod tests {
             enemies: Vec::new(),
             mobs: HashMap::new(),
             spawn_points: Vec::new(),
+            spawn_names: Vec::new(),
             armed: Vec::new(),
             spawned: Vec::new(),
-            pending: Vec::new(),
             disabled: false,
         };
         manager.mobs.insert("bat".into(), bat_mob());
-        manager.spawn_from_with_idle("test", "bat", vec2(112.0, 112.0), 0.0);
-        manager.spawn_from_with_idle("test", "bat", vec2(112.0, 112.0), 0.0);
+        manager.spawn_from("test", "bat", vec2(112.0, 112.0));
+        manager.spawn_from("test", "bat", vec2(112.0, 112.0));
         let pos = vec2(112.0, 112.0);
         assert_eq!(manager.contact_attack(pos), Some((0, 10, 10.0)));
         manager.set_attack_cooldown(0, 0.5);

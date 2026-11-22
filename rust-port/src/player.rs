@@ -315,4 +315,32 @@ mod tests {
         assert!(player.just_finished_move);
         assert_eq!(player.pos.x, 80.0);
     }
+
+    #[test]
+    fn cannot_start_move_onto_blocked_tile() {
+        let map = MapData {
+            name: "test".into(),
+            width: 4,
+            height: 4,
+            tile_width: 32.0,
+            tile_height: 32.0,
+            tiles: vec![vec![0; 4]; 4],
+            flips: vec![vec![0; 4]; 4],
+            solid: HashSet::new(),
+            spikes: HashSet::new(),
+            objects: Vec::new(),
+            rooms: HashMap::new(),
+            spawn: vec2(48.0, 48.0),
+            light_sources: Vec::new(),
+            light_blockers: HashSet::new(),
+            lightable_tiles: HashSet::new(),
+            block_light_tiles: HashSet::new(),
+        };
+        let mut blocked = HashSet::new();
+        blocked.insert(Tile(2, 1));
+        let mut player = Player::new(vec2(48.0, 48.0), false);
+        assert!(!player.update(0.016, &map, &blocked, &[KeyCode::D], &[]));
+        assert!(!player.moving);
+        assert_eq!(player.target, vec2(48.0, 48.0));
+    }
 }

@@ -198,8 +198,12 @@ DIALOGUE_TEXT_COLOR = (235, 232, 213)
 # Chest interaction
 CHEST_REWARD_IDS = (
     "apple",
+    "pear",
+    "banana",
+    "bronze_sword",
     "iron_sword",
     "rusty_iron_sword",
+    "stainless_steel_shield",
     "leather_armour",
     "titanium_sword",
 )

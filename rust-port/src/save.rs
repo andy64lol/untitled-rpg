@@ -46,6 +46,8 @@ pub struct EnemyEntry {
     pub kind: String,
     pub x: f32,
     pub y: f32,
+    #[serde(default)]
+    pub hp: i32,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -113,18 +115,18 @@ mod tests {
     #[test]
     fn save_state_round_trip_preserves_runtime_config() {
         let mut config = crate::config::RuntimeConfig::default();
-        config.set("enemy_spawn_delay", "0.5");
+        config.set("enemy_spawn_distance_tiles", "3.5");
         config.set("death_title", "GAME OVER");
         let state = SaveState { config, ..Default::default() };
         let json = serde_json::to_string(&state).unwrap();
         let loaded: SaveState = serde_json::from_str(&json).unwrap();
-        assert_eq!(loaded.config.enemy_spawn_delay, 0.5);
+        assert_eq!(loaded.config.enemy_spawn_distance_tiles, 3.5);
         assert_eq!(loaded.config.death_title, "GAME OVER");
 
         let mut value = serde_json::to_value(&state).unwrap();
         value.as_object_mut().unwrap().remove("config");
         let legacy: SaveState = serde_json::from_value(value).unwrap();
-        assert_eq!(legacy.config.enemy_spawn_delay, 1.0);
+        assert_eq!(legacy.config.enemy_spawn_distance_tiles, 2.0);
     }
 }
 

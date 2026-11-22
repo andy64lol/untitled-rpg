@@ -69,7 +69,17 @@ PLAYER-MOVE REPLAY (RUST ONLY)
   The script's movePlayer()/tick()/stopMove() calls drive the player like WASD.
   The default init script is skipped unless --script is also passed.
   See moves.urpgs for an example. Enemy spawns are logged with source and tile.
-  New enemies wait enemy_spawn_idle seconds (default 2.0) on the spawnEnemy point
-  before any AI or contact damage. damage_speed controls attacks per second.
+  Triggers arm on the marker and fire once the player is enemy_spawn_distance_tiles
+  (default 2.0) tiles away. Returning to the marker keeps it armed.
+  New enemies spawn on the spawnEnemy point and start moving immediately.
+  Enemies and the player are solid to each other; neither can walk onto the
+  other's tile, and enemies attack from an adjacent tile.
+  damage_speed is tenths of a second between hits, so higher values attack slower.
+  Enemy damage/defense/hp come from enemies.json ("damage" is attack). Your
+  equipped attack minus enemy defense reduces enemy HP; hits show a red number
+  and flash the enemy red, and 0 HP starts the death animation.
+  Damage logs show source, enemy spawn and current positions, raw/dealt damage,
+  HP, interval since the previous damage event, and the next cooldown.
+  Spawn markers are numbered numerically (spawnEnemy2 before spawnEnemy10).
 
 Item ids are from items.json. Enemy ids are from enemy.json ("id").

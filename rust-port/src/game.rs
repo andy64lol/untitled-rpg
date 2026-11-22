@@ -26,6 +26,15 @@ enum Screen {
     Settings,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BumpObject {
+    Fountain,
+    Switch,
+    Plate,
+    Chest,
+    FakeChest,
+}
+
 const SETTING_START_MAP: usize = 0;
 const SETTING_START_SCRIPT: usize = 1;
 const SETTING_HEALTH: usize = 2;
@@ -119,6 +128,7 @@ impl Options {
 struct DamageNumber {
     text: String,
     pos: Vec2,
+    color: Color,
     timer: f32,
 }
 
@@ -195,6 +205,8 @@ pub struct Game {
     heart_shake_time: f32,
     rng_state: u64,
     spike_timer: f32,
+    damage_clock: f32,
+    last_damage_at: Option<f32>,
     fountain_timer: f32,
     door_unlocked: bool,
     slot_menu_message: String,
@@ -281,6 +293,8 @@ impl Game {
                 .map(|duration| duration.as_nanos() as u64 | 1)
                 .unwrap_or(0x9e3779b97f4a7c15),
             spike_timer: 0.0,
+            damage_clock: 0.0,
+            last_damage_at: None,
             fountain_timer: 0.0,
             door_unlocked: false,
             slot_menu_message: String::new(),
@@ -337,6 +351,7 @@ impl Game {
         self.death_timer = None;
         self.damage_numbers.clear();
         self.attack_effects.clear();
+        self.reset_damage_clock();
         self.door_unlocked = false;
         self.dialogue.close();
         self.options.close();
@@ -375,6 +390,7 @@ impl Game {
         self.room_light_ready = false;
         self.visible_tiles.clear();
         self.visible_rooms.clear();
+        self.reset_damage_clock();
         self.fountain_timer = 0.0;
         self.door_unlocked = false;
         self.player.reset(self.map.spawn);
@@ -522,6 +538,7 @@ impl Game {
                 if dealt > 0 {
                     self.spawn_damage_number(dealt);
                 }
+                self.log_damage("script", amount, dealt, None);
                 self.unsaved = true;
             }
             ScriptAction::SetHealth(amount) => {
@@ -570,10 +587,43 @@ impl Game {
         }
     }
 
+    fn reset_damage_clock(&mut self) {
+        self.damage_clock = 0.0;
+        self.last_damage_at = None;
+    }
+
+    fn log_damage(&mut self, source: &str, raw: i32, dealt: i32, cooldown: Option<f32>) {
+        let interval = self
+            .last_damage_at
+            .map(|last| (self.damage_clock - last).max(0.0));
+        log_line(&damage_log_line(
+            source,
+            raw,
+            dealt,
+            self.player.hp,
+            self.player.max_hp,
+            interval,
+            cooldown,
+        ));
+        self.last_damage_at = Some(self.damage_clock);
+    }
+
     fn spawn_damage_number(&mut self, amount: i32) {
+        self.spawn_damage_number_at(amount, self.player.pos + vec2(0.0, -20.0));
+    }
+
+    fn spawn_enemy_damage_number(&mut self, amount: i32, pos: Vec2) {
+        self.spawn_damage_number_at(amount, pos + vec2(0.0, -20.0));
+    }
+
+    fn spawn_damage_number_at(&mut self, amount: i32, pos: Vec2) {
+        if amount <= 0 {
+            return;
+        }
         self.damage_numbers.push(DamageNumber {
             text: format!("-{amount}"),
-            pos: self.player.pos + vec2(0.0, -20.0),
+            pos,
+            color: Color::new(1.0, 70.0 / 255.0, 70.0 / 255.0, 1.0),
             timer: crate::config::get().damage_number_lifetime,
         });
     }
@@ -587,7 +637,24 @@ impl Game {
             pos,
             timer: crate::config::get().attack_effect_duration,
         });
-        self.enemies.attack_at(pos);
+        let (attack, _) = self.equipment.combat_stats(&self.items);
+        let Some(hit) = self.enemies.attack_at(pos, attack) else {
+            return;
+        };
+        if hit.dealt > 0 {
+            self.spawn_enemy_damage_number(hit.dealt, hit.pos);
+            log_line(&format!(
+                "[enemy] hit enemy#{}:{} raw={} dealt={} hp={}/{} at ({:.0}, {:.0})",
+                hit.index,
+                hit.mob,
+                hit.attack,
+                hit.dealt,
+                hit.hp,
+                hit.max_hp,
+                hit.pos.x,
+                hit.pos.y
+            ));
+        }
     }
 
     fn log_script_state(&self, message: &str) {
@@ -613,6 +680,12 @@ impl Game {
 
     fn blocked_tiles(&self) -> HashSet<Tile> {
         blocked_tiles_for(&self.map, self.door_unlocked)
+    }
+
+    fn movement_blocked_tiles(&self) -> HashSet<Tile> {
+        let mut blocked = self.blocked_tiles();
+        blocked.extend(self.enemies.occupied_tiles(&self.map));
+        blocked
     }
 
     fn update(&mut self, dt: f32) {
@@ -670,6 +743,7 @@ impl Game {
             Screen::Game => {}
         }
 
+        self.damage_clock += dt;
         self.update_fog(dt);
 
         if self.transition.is_some() {
@@ -777,11 +851,12 @@ impl Game {
             }
         }
         self.enemies.update(dt);
-        let moved = self.player.update(dt, &self.map, &blocked, &move_keys, &pressed);
+        let movement_blocked = self.movement_blocked_tiles();
+        let moved = self.player.update(dt, &self.map, &movement_blocked, &move_keys, &pressed);
         if !self.cli.freecam {
             self.camera = self.player.pos;
         }
-        self.enemies.update_triggers(dt, self.map.tile_of(self.player.target), &self.map);
+        self.enemies.update_triggers(self.map.tile_of(self.player.target), &self.map);
 
         for effect in self.attack_effects.iter_mut() {
             effect.timer -= dt;
@@ -811,11 +886,14 @@ impl Game {
         self.spike_timer -= dt;
         if self.map.spikes.contains(&self.map.tile_of(self.player.pos)) && self.spike_timer <= 0.0 {
             let (_, defense) = self.equipment.combat_stats(&self.items);
-            let dealt = self.player.take_damage(crate::config::get().spike_damage, defense);
+            let raw = crate::config::get().spike_damage;
+            let cooldown = crate::config::get().spike_cooldown;
+            let dealt = self.player.take_damage(raw, defense);
             if dealt > 0 {
                 self.spawn_damage_number(dealt);
             }
-            self.spike_timer = crate::config::get().spike_cooldown;
+            self.spike_timer = cooldown;
+            self.log_damage("spikes", raw, dealt, Some(cooldown));
         } else if !self.map.spikes.contains(&self.map.tile_of(self.player.pos)) {
             self.spike_timer = 0.0;
         }
@@ -825,18 +903,33 @@ impl Game {
         let Some((index, damage, damage_speed)) = self.enemies.contact_attack(self.player.pos) else {
             return;
         };
-        if damage > 0 {
-            let (_, defense) = self.equipment.combat_stats(&self.items);
-            let dealt = self.player.take_damage(damage, defense);
-            if dealt > 0 {
-                self.spawn_damage_number(dealt);
-            }
+        let source = self.enemies.enemies.get(index).map_or_else(
+            || format!("enemy#{index}"),
+            |enemy| {
+                let tile = self.map.tile_of(enemy.pos);
+                format!(
+                    "enemy#{index}:{} spawn=({:.0}, {:.0}) pos=({:.0}, {:.0}) tile ({}, {})",
+                    enemy.mob,
+                    enemy.spawn.x,
+                    enemy.spawn.y,
+                    enemy.pos.x,
+                    enemy.pos.y,
+                    tile.0,
+                    tile.1
+                )
+            },
+        );
+        let (_, defense) = self.equipment.combat_stats(&self.items);
+        let dealt = self.player.take_damage(damage, defense);
+        if dealt > 0 {
+            self.spawn_damage_number(dealt);
         }
         let cooldown = crate::enemies::attack_cooldown(
             damage_speed,
             crate::config::get().enemy_damage_cooldown,
         );
         self.enemies.set_attack_cooldown(index, cooldown);
+        self.log_damage(&source, damage, dealt, Some(cooldown));
     }
 
     fn log_rooms(&self) {
@@ -1194,28 +1287,29 @@ impl Game {
         if self.player.dead || self.player.moving {
             return;
         }
-        let pos = self.player.pos;
-        let fountain = self.map.object_index_at_tile("fountain", next);
-        if let Some(index) = fountain {
-            self.open_fountain(index);
+        if let Some((kind, index)) = bump_object_at_tile(&self.map, next) {
+            match kind {
+                BumpObject::Fountain => self.open_fountain(index),
+                BumpObject::Switch => {
+                    self.interact_switch_index(index);
+                }
+                BumpObject::Plate => {
+                    self.interact_plate_index(index);
+                }
+                BumpObject::Chest => self.open_chest(index),
+                BumpObject::FakeChest => self.open_fake_chest(index),
+            }
             return;
         }
         if self.interact_switch_in_front() || self.interact_plate_in_front() {
             return;
         }
-        let chest = self
-            .map
-            .object_index_at_tile("chest", next)
-            .or_else(|| self.map.object_in_front(pos, &self.player.facing, "chest"));
-        if let Some(index) = chest {
+        let pos = self.player.pos;
+        if let Some(index) = self.map.object_in_front(pos, &self.player.facing, "chest") {
             self.open_chest(index);
             return;
         }
-        let fake_chest = self
-            .map
-            .object_index_at_tile("fakeChest", next)
-            .or_else(|| self.map.object_in_front(pos, &self.player.facing, "fakeChest"));
-        if let Some(index) = fake_chest {
+        if let Some(index) = self.map.object_in_front(pos, &self.player.facing, "fakeChest") {
             self.open_fake_chest(index);
             return;
         }
@@ -1226,6 +1320,10 @@ impl Game {
         let Some(index) = self.map.object_in_front(self.player.pos, &self.player.facing, "switch") else {
             return false;
         };
+        self.interact_switch_index(index)
+    }
+
+    fn interact_switch_index(&mut self, index: usize) -> bool {
         let message = if self.switches.get(index).copied().unwrap_or(false) {
             "The switch is currently on, flip it?"
         } else {
@@ -1239,6 +1337,10 @@ impl Game {
         let Some(index) = self.map.object_in_front(self.player.pos, &self.player.facing, "pressurePlate") else {
             return false;
         };
+        self.interact_plate_index(index)
+    }
+
+    fn interact_plate_index(&mut self, index: usize) -> bool {
         if self.plates.get(index).copied().unwrap_or(false) {
             return false;
         }
@@ -1299,13 +1401,12 @@ impl Game {
             self.dialogue.show("This chest has already been opened.");
             return;
         }
-        let rewards = ["apple", "iron_sword", "rusty_iron_sword", "leather_armour", "titanium_sword"];
         let unopened = self.chests_opened.iter().filter(|opened| !**opened).count();
         let reward = if unopened == 1 {
             "key"
         } else {
-            let pick = self.random_index(rewards.len());
-            rewards[pick]
+            let pick = self.random_index(CHEST_REWARD_IDS.len());
+            CHEST_REWARD_IDS[pick]
         };
         let stackable = self.items.get(reward).map_or(false, |i| i.stackable);
         if !self.inventory.add(reward, 1, stackable) {
@@ -1490,7 +1591,7 @@ impl Game {
             },
             enemies: save::EnemySave {
                 enemies: self.enemies.enemies.iter().filter(|e| !e.dying).map(|e| save::EnemyEntry {
-                    kind: e.mob.clone(), x: e.pos.x, y: e.pos.y,
+                    kind: e.mob.clone(), x: e.pos.x, y: e.pos.y, hp: e.hp,
                 }).collect(),
                 spawned: self.enemies.spawned.iter().enumerate().filter_map(|(i, v)| v.then_some(i)).collect(),
             },
@@ -1532,9 +1633,10 @@ impl Game {
         self.switches.resize(self.map.objects_named_prefix("switch").len(), false);
         self.plates = state.map_objects.pressure_plates;
         self.plates.resize(self.map.objects_named_prefix("pressurePlate").len(), false);
+        self.reset_damage_clock();
         self.enemies.enemies.clear();
         for enemy in state.enemies.enemies {
-            self.enemies.spawn_from_with_idle("save", &enemy.kind, vec2(enemy.x, enemy.y), 0.0);
+            self.enemies.spawn_from_saved("save", &enemy.kind, vec2(enemy.x, enemy.y), enemy.hp);
         }
         for index in state.enemies.spawned {
             if let Some(value) = self.enemies.spawned.get_mut(index) {
@@ -1815,13 +1917,12 @@ impl Game {
         for number in &self.damage_numbers {
             let progress = (number.timer / crate::config::get().damage_number_lifetime).clamp(0.0, 1.0);
             let alpha = (progress * 2.0).min(1.0);
-            let shade = 60.0 + 80.0 * (1.0 - progress);
             draw_text_at(
                 &number.text,
                 number.pos.x,
                 number.pos.y,
                 crate::config::get().damage_number_font_size,
-                Color::new(1.0, shade / 255.0, shade / 255.0, alpha),
+                Color::new(number.color.r, number.color.g, number.color.b, alpha),
                 &self.assets.font,
                 0.5,
                 0.5,
@@ -2950,6 +3051,22 @@ impl Game {
     }
 }
 
+fn damage_log_line(
+    source: &str,
+    raw: i32,
+    dealt: i32,
+    hp: i32,
+    max_hp: i32,
+    interval: Option<f32>,
+    cooldown: Option<f32>,
+) -> String {
+    let interval = interval.map_or_else(|| "none".into(), |value| format!("{value:.2}s"));
+    let cooldown = cooldown.map_or_else(|| "none".into(), |value| format!("{value:.2}s"));
+    format!(
+        "[damage] {source} raw={raw} dealt={dealt} hp={hp}/{max_hp} interval={interval} cooldown={cooldown}"
+    )
+}
+
 fn direction_name(value: &str) -> Option<&'static str> {
     match value.to_ascii_lowercase().as_str() {
         "up" | "u" | "w" | "north" => Some("up"),
@@ -2968,6 +3085,21 @@ fn movement_key(value: &str) -> Option<KeyCode> {
         "right" => Some(KeyCode::D),
         _ => None,
     }
+}
+
+fn bump_object_at_tile(map: &MapData, tile: Tile) -> Option<(BumpObject, usize)> {
+    [
+        (BumpObject::Fountain, "fountain"),
+        (BumpObject::Switch, "switch"),
+        (BumpObject::Plate, "pressurePlate"),
+        (BumpObject::Chest, "chest"),
+        (BumpObject::FakeChest, "fakeChest"),
+    ]
+    .into_iter()
+    .find_map(|(kind, prefix)| {
+        map.object_index_at_tile(prefix, tile)
+            .map(|index| (kind, index))
+    })
 }
 
 fn blocked_tiles_for(map: &MapData, door_unlocked: bool) -> HashSet<Tile> {
@@ -3002,6 +3134,38 @@ mod tests {
     }
 
     #[test]
+    fn map4_chest4_bump_prefers_chest_over_switch() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("maps")
+            .join("map4.tmx");
+        let map = MapData::load(&path);
+        let chest = map.object_named("chest4").expect("chest4");
+        let switch = map.object_named("switch2").expect("switch2");
+        let chest_tile = map.tile_of(vec2(chest.x, chest.y));
+        let switch_tile = map.tile_of(vec2(switch.x, switch.y));
+        assert_ne!(chest_tile, switch_tile);
+
+        let chest_index = map.objects_named_prefix("chest")
+            .iter()
+            .position(|object| object.name == "chest4")
+            .expect("chest index");
+        let switch_index = map.objects_named_prefix("switch")
+            .iter()
+            .position(|object| object.name == "switch2")
+            .expect("switch index");
+
+        assert_eq!(
+            bump_object_at_tile(&map, chest_tile),
+            Some((BumpObject::Chest, chest_index))
+        );
+        assert_eq!(
+            bump_object_at_tile(&map, switch_tile),
+            Some((BumpObject::Switch, switch_index))
+        );
+    }
+
+    #[test]
     fn map_transition_swaps_when_fade_out_finishes() {
         let mut inactive = None;
         assert_eq!(Game::advance_transition(&mut inactive, 1.0, 1.0), None);
@@ -3025,5 +3189,20 @@ mod tests {
         assert_eq!(transition, Some(MapTransition::FadeIn { elapsed: 0.5 }));
         assert_eq!(Game::advance_transition(&mut transition, 0.5, 1.0), None);
         assert_eq!(transition, None);
+    }
+
+    #[test]
+    fn damage_log_includes_interval_and_cooldown() {
+        let line = damage_log_line("enemy#2:snake", 25, 24, 76, 100, Some(2.0), Some(2.0));
+        assert_eq!(
+            line,
+            "[damage] enemy#2:snake raw=25 dealt=24 hp=76/100 interval=2.00s cooldown=2.00s"
+        );
+
+        let first = damage_log_line("spikes", 10, 9, 91, 100, None, Some(0.9));
+        assert_eq!(
+            first,
+            "[damage] spikes raw=10 dealt=9 hp=91/100 interval=none cooldown=0.90s"
+        );
     }
 }

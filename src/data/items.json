@@ -12,7 +12,7 @@
   "pear": {
     "name": "Pear",
     "texture": "pear.png",
-    "type": "consumeable",
+    "type": "consumable",
     "stackable": true,
     "heal": 15,
     "price": 10,
@@ -22,7 +22,7 @@
   "banana": {
     "name": "Banana",
     "texture": "banana.png",
-    "type": "consumeable",
+    "type": "consumable",
     "stackable": true,
     "heal": 20,
     "price": 15,

@@ -235,6 +235,20 @@ mod tests {
         let items = load_items(&path);
         assert_eq!(items.len(), 10);
         assert_eq!(items["titanium_sword"].quality, 3);
+        assert_eq!(items["pear"].item_type, "consumable");
+        assert_eq!(items["banana"].item_type, "consumable");
+    }
+
+    #[test]
+    fn chest_rewards_include_every_item_except_key() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/data/items.json");
+        let items = load_items(&path);
+        let mut rewards: Vec<_> = crate::config::CHEST_REWARD_IDS.to_vec();
+        rewards.push("key");
+        rewards.sort_unstable();
+        let mut ids: Vec<_> = items.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        assert_eq!(rewards, ids);
     }
 
     #[test]
