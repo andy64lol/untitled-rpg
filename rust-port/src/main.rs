@@ -16,6 +16,8 @@ use std::path::PathBuf;
 
 use macroquad::prelude::*;
 
+pub const DEFAULT_STARTUP_SCRIPT: &str = "init";
+
 pub static mut LOG: Option<Logger> = None;
 
 pub struct Logger {
@@ -71,7 +73,7 @@ pub fn set_log_output(enabled: bool) {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Cli {
     pub level: usize,
     pub level_given: bool,
@@ -85,6 +87,25 @@ pub struct Cli {
     pub debug: bool,
     pub script: Option<String>,
     pub output_file: bool,
+}
+
+impl Default for Cli {
+    fn default() -> Self {
+        Self {
+            level: 0,
+            level_given: false,
+            health_infinite: false,
+            disable_player_light: false,
+            freecam: false,
+            disable_map_light: false,
+            disable_rooms: false,
+            disable_fog_of_war: false,
+            no_enemies: false,
+            debug: false,
+            script: Some(DEFAULT_STARTUP_SCRIPT.into()),
+            output_file: false,
+        }
+    }
 }
 
 fn print_help() {
@@ -104,8 +125,8 @@ fn print_help() {
     println!("  --disable-rooms           use light visibility instead of rooms");
     println!("  --disable-fog-of-war      show enemies even on dark tiles");
     println!("  --no-enemies              disable enemy spawns and contact damage");
-    println!("  --debug                   show active options in the top-right corner");
-    println!("  --script NAME             run scripts/NAME.urpgs on startup");
+    println!("  --debug                   show modified config values in the top-right corner");
+    println!("  --script NAME             run scripts/NAME.urpgs on startup (default: init)");
     println!("  --output-file             also write logs to src/logs/runX.txt");
     println!();
     println!("The same options can be changed in-game from the Settings menu.");
@@ -240,6 +261,12 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn startup_script_defaults_to_init() {
+        let cli = parse_args_from(&[]).unwrap().unwrap();
+        assert_eq!(cli.script.as_deref(), Some("init"));
     }
 
     #[test]

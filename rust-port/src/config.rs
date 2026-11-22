@@ -1,5 +1,6 @@
 use std::path::Path;
-use std::sync::OnceLock;
+use std::ptr;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 use macroquad::prelude::*;
 
@@ -33,7 +34,7 @@ pub const DAMAGE_FLASH_DURATION: f32 = 0.25;
 pub const DAMAGE_NUMBER_LIFETIME: f32 = 0.9;
 pub const DAMAGE_NUMBER_RISE: f32 = 55.0;
 pub const ENEMY_DEATH_DURATION: f32 = 0.45;
-pub const ENEMY_SPAWN_DELAY: f32 = 2.0;
+pub const ENEMY_SPAWN_DELAY: f32 = 1.0;
 pub const DEATH_ANIMATION_DURATION: f32 = 0.6;
 pub const DEATH_SCREEN_DELAY: f32 = 5.0;
 pub const DEATH_TITLE: &str = "YOU DIED";
@@ -111,9 +112,10 @@ pub const TEXT_COLOR: Color = Color::new(235.0 / 255.0, 232.0 / 255.0, 213.0 / 2
 pub const MENU_MUTED_TEXT: Color = Color::new(142.0 / 255.0, 151.0 / 255.0, 164.0 / 255.0, 1.0);
 pub const MENU_BACKGROUND: Color = Color::new(10.0 / 255.0, 12.0 / 255.0, 20.0 / 255.0, 1.0);
 
-static RUNTIME: OnceLock<RuntimeConfig> = OnceLock::new();
+static RUNTIME: AtomicPtr<RuntimeConfig> = AtomicPtr::new(ptr::null_mut());
+static ORIGINAL: AtomicPtr<RuntimeConfig> = AtomicPtr::new(ptr::null_mut());
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct RuntimeConfig {
     pub version: String,
     pub window_title: String,
@@ -276,12 +278,93 @@ impl Default for RuntimeConfig {
     }
 }
 
+fn replace(slot: &AtomicPtr<RuntimeConfig>, config: RuntimeConfig) -> &'static RuntimeConfig {
+    let raw = Box::into_raw(Box::new(config));
+    let old = slot.swap(raw, Ordering::SeqCst);
+    debug_assert!(old != raw);
+    unsafe { &*raw }
+}
+
+fn instance(slot: &AtomicPtr<RuntimeConfig>) -> &'static RuntimeConfig {
+    let mut raw = slot.load(Ordering::SeqCst);
+    if raw.is_null() {
+        let new = Box::into_raw(Box::new(RuntimeConfig::default()));
+        match slot.compare_exchange(ptr::null_mut(), new, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => raw = new,
+            Err(existing) => {
+                unsafe {
+                    drop(Box::from_raw(new));
+                }
+                raw = existing;
+            }
+        }
+    }
+    unsafe { &*raw }
+}
+
 pub fn init(path: &Path) {
-    let _ = RUNTIME.set(RuntimeConfig::load(path));
+    let config = RuntimeConfig::load(path);
+    replace(&RUNTIME, config.clone());
+    replace(&ORIGINAL, config);
 }
 
 pub fn get() -> &'static RuntimeConfig {
-    RUNTIME.get_or_init(RuntimeConfig::default)
+    instance(&RUNTIME)
+}
+
+pub fn original() -> &'static RuntimeConfig {
+    instance(&ORIGINAL)
+}
+
+pub fn snapshot() -> RuntimeConfig {
+    get().clone()
+}
+
+pub fn restore(config: &RuntimeConfig) {
+    replace(&RUNTIME, config.clone());
+}
+
+pub fn keys() -> Vec<String> {
+    serde_json::to_value(RuntimeConfig::default())
+        .ok()
+        .and_then(|value| value.as_object().map(|map| map.keys().cloned().collect()))
+        .unwrap_or_default()
+}
+
+pub fn value(key: &str) -> Option<String> {
+    format_field(serde_json::to_value(get()).ok()?.get(key)?)
+}
+
+pub fn original_value(key: &str) -> Option<String> {
+    format_field(serde_json::to_value(original()).ok()?.get(key)?)
+}
+
+fn format_field(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => Some(text.clone()),
+        serde_json::Value::Null => None,
+        other => Some(other.to_string()),
+    }
+}
+
+pub fn modified() -> Vec<(String, String, String)> {
+    keys()
+        .into_iter()
+        .filter_map(|key| {
+            let current = value(&key)?;
+            let original = original_value(&key)?;
+            (current != original).then_some((key, current, original))
+        })
+        .collect()
+}
+
+pub fn set_value(key: &str, value: &str) -> bool {
+    let mut config = get().clone();
+    if !config.set(key, value) {
+        return false;
+    }
+    replace(&RUNTIME, config);
+    true
 }
 
 impl RuntimeConfig {
@@ -303,151 +386,102 @@ impl RuntimeConfig {
         config
     }
 
-    fn set(&mut self, key: &str, value: &str) {
+    pub(crate) fn set(&mut self, key: &str, value: &str) -> bool {
+        macro_rules! number {
+            ($field:ident, $ty:ty) => {
+                match value.parse::<$ty>() {
+                    Ok(parsed) => {
+                        self.$field = parsed;
+                        true
+                    }
+                    Err(_) => false,
+                }
+            };
+        }
+        macro_rules! text {
+            ($field:ident) => {{
+                self.$field = value.to_string();
+                true
+            }};
+        }
         match key {
-            "version" => self.version = value.into(),
-            "window_title" => self.window_title = value.into(),
-            "window_width" => self.window_width = value.parse().unwrap_or(self.window_width),
-            "window_height" => self.window_height = value.parse().unwrap_or(self.window_height),
-            "save_slots" => self.save_slots = value.parse().unwrap_or(self.save_slots),
-            "camera_zoom" => self.camera_zoom = value.parse().unwrap_or(self.camera_zoom),
-            "player_speed" => self.player_speed = value.parse().unwrap_or(self.player_speed),
-            "player_max_hp" => self.player_max_hp = value.parse().unwrap_or(self.player_max_hp),
-            "health_per_heart" => {
-                self.health_per_heart = value.parse().unwrap_or(self.health_per_heart)
-            }
-            "interaction_distance" => {
-                self.interaction_distance = value.parse().unwrap_or(self.interaction_distance)
-            }
-            "base_attack" => self.base_attack = value.parse().unwrap_or(self.base_attack),
-            "base_defense" => self.base_defense = value.parse().unwrap_or(self.base_defense),
-            "swing_angle_degrees" => {
-                self.swing_angle_degrees = value.parse().unwrap_or(self.swing_angle_degrees)
-            }
-            "swing_speed" => self.swing_speed = value.parse().unwrap_or(self.swing_speed),
-            "swing_ease" => self.swing_ease = value.parse().unwrap_or(self.swing_ease),
-            "flip_duration" => self.flip_duration = value.parse().unwrap_or(self.flip_duration),
-            "damage_flash_duration" => {
-                self.damage_flash_duration = value.parse().unwrap_or(self.damage_flash_duration)
-            }
-            "damage_number_lifetime" => {
-                self.damage_number_lifetime = value.parse().unwrap_or(self.damage_number_lifetime)
-            }
-            "damage_number_rise" => {
-                self.damage_number_rise = value.parse().unwrap_or(self.damage_number_rise)
-            }
-            "enemy_death_duration" => {
-                self.enemy_death_duration = value.parse().unwrap_or(self.enemy_death_duration)
-            }
-            "death_animation_duration" => {
-                self.death_animation_duration = value.parse().unwrap_or(self.death_animation_duration)
-            }
-            "death_screen_delay" => {
-                self.death_screen_delay = value.parse().unwrap_or(self.death_screen_delay)
-            }
-            "darkness_alpha" => {
-                self.darkness_alpha = value.parse().unwrap_or(self.darkness_alpha)
-            }
-            "room_light_speed" => {
-                self.room_light_speed = value.parse().unwrap_or(self.room_light_speed)
-            }
-            "room_light_boost" => {
-                self.room_light_boost = value.parse().unwrap_or(self.room_light_boost)
-            }
-            "room_fade_tiles" => {
-                self.room_fade_tiles = value.parse().unwrap_or(self.room_fade_tiles)
-            }
-            "player_light_radius_tiles" => {
-                self.player_light_radius_tiles = value
-                    .parse()
-                    .unwrap_or(self.player_light_radius_tiles)
-            }
-            "player_light_peak" => {
-                self.player_light_peak = value.parse().unwrap_or(self.player_light_peak)
-            }
-            "room_dim" => self.room_dim = value.parse().unwrap_or(self.room_dim),
-            "light_radius_tiles" => self.light_radius_tiles = value.parse().unwrap_or(self.light_radius_tiles),
-            "light_ray_count" => self.light_ray_count = value.parse().unwrap_or(self.light_ray_count),
-            "player_ray_count" => self.player_ray_count = value.parse().unwrap_or(self.player_ray_count),
-            "light_peak" => self.light_peak = value.parse().unwrap_or(self.light_peak),
-            "lightmap_samples_per_tile" => {
-                self.lightmap_samples_per_tile = value.parse().unwrap_or(self.lightmap_samples_per_tile)
-            }
-            "player_vision_tiles" => self.player_vision_tiles = value.parse().unwrap_or(self.player_vision_tiles),
-            "nonroom_player_light_peak" => {
-                self.nonroom_player_light_peak = value.parse().unwrap_or(self.nonroom_player_light_peak)
-            }
-            "player_light_cone_degrees" => {
-                self.player_light_cone_degrees = value.parse().unwrap_or(self.player_light_cone_degrees)
-            }
-            "player_light_inner_tiles" => {
-                self.player_light_inner_tiles = value.parse().unwrap_or(self.player_light_inner_tiles)
-            }
-            "player_light_edge_fraction" => {
-                self.player_light_edge_fraction = value.parse().unwrap_or(self.player_light_edge_fraction)
-            }
-            "light_source_tint_radius_tiles" => {
-                self.light_source_tint_radius_tiles = value.parse().unwrap_or(self.light_source_tint_radius_tiles)
-            }
-            "light_source_tint_alpha" => {
-                self.light_source_tint_alpha = value.parse().unwrap_or(self.light_source_tint_alpha)
-            }
-            "damage_number_font_size" => {
-                self.damage_number_font_size = value.parse().unwrap_or(self.damage_number_font_size)
-            }
-            "death_font_size" => self.death_font_size = value.parse().unwrap_or(self.death_font_size),
-            "death_message_font_size" => {
-                self.death_message_font_size = value.parse().unwrap_or(self.death_message_font_size)
-            }
-            "death_hint_font_size" => self.death_hint_font_size = value.parse().unwrap_or(self.death_hint_font_size),
-            "title_scale" => self.title_scale = value.parse().unwrap_or(self.title_scale),
-            "min_window_width" => self.min_window_width = value.parse().unwrap_or(self.min_window_width),
-            "min_window_height" => self.min_window_height = value.parse().unwrap_or(self.min_window_height),
-            "columns" => self.columns = value.parse().unwrap_or(self.columns),
-            "rows" => self.rows = value.parse().unwrap_or(self.rows),
-            "slot_size" => self.slot_size = value.parse().unwrap_or(self.slot_size),
-            "slot_gap" => self.slot_gap = value.parse().unwrap_or(self.slot_gap),
-            "max_stack" => self.max_stack = value.parse().unwrap_or(self.max_stack),
-            "starting_gold" => self.starting_gold = value.parse().unwrap_or(self.starting_gold),
-            "equipment_slot_size" => {
-                self.equipment_slot_size = value.parse().unwrap_or(self.equipment_slot_size)
-            }
-            "equipment_slot_gap" => {
-                self.equipment_slot_gap = value.parse().unwrap_or(self.equipment_slot_gap)
-            }
-            "panel_padding" => self.panel_padding = value.parse().unwrap_or(self.panel_padding),
-            "panel_gap" => self.panel_gap = value.parse().unwrap_or(self.panel_gap),
-            "label_height" => self.label_height = value.parse().unwrap_or(self.label_height),
-            "star_size" => self.star_size = value.parse().unwrap_or(self.star_size),
-            "star_gap" => self.star_gap = value.parse().unwrap_or(self.star_gap),
-            "attack_effect_duration" => {
-                self.attack_effect_duration = value.parse().unwrap_or(self.attack_effect_duration)
-            }
-            "attack_effect_size" => {
-                self.attack_effect_size = value.parse().unwrap_or(self.attack_effect_size)
-            }
-            "transition_duration" => {
-                self.transition_duration = value.parse().unwrap_or(self.transition_duration)
-            }
-            "fountain_heal" => self.fountain_heal = value.parse().unwrap_or(self.fountain_heal),
-            "fountain_cooldown" => {
-                self.fountain_cooldown = value.parse().unwrap_or(self.fountain_cooldown)
-            }
-            "spike_damage" => self.spike_damage = value.parse().unwrap_or(self.spike_damage),
-            "spike_cooldown" => self.spike_cooldown = value.parse().unwrap_or(self.spike_cooldown),
-            "enemy_damage_cooldown" => {
-                self.enemy_damage_cooldown = value.parse().unwrap_or(self.enemy_damage_cooldown)
-            }
-            "enemy_spawn_delay" => {
-                self.enemy_spawn_delay = value.parse().unwrap_or(self.enemy_spawn_delay)
-            }
-            "death_title" => self.death_title = value.into(),
-            "death_message" => self.death_message = value.into(),
-            "death_hint" => self.death_hint = value.into(),
-            "win_title" => self.win_title = value.into(),
-            "win_message" => self.win_message = value.into(),
-            "win_hint" => self.win_hint = value.into(),
-            _ => {}
+            "version" => text!(version),
+            "window_title" => text!(window_title),
+            "window_width" => number!(window_width, i32),
+            "window_height" => number!(window_height, i32),
+            "save_slots" => number!(save_slots, usize),
+            "camera_zoom" => number!(camera_zoom, f32),
+            "player_speed" => number!(player_speed, f32),
+            "player_max_hp" => number!(player_max_hp, i32),
+            "health_per_heart" => number!(health_per_heart, i32),
+            "interaction_distance" => number!(interaction_distance, f32),
+            "base_attack" => number!(base_attack, i32),
+            "base_defense" => number!(base_defense, i32),
+            "swing_angle_degrees" => number!(swing_angle_degrees, f32),
+            "swing_speed" => number!(swing_speed, f32),
+            "swing_ease" => number!(swing_ease, f32),
+            "flip_duration" => number!(flip_duration, f32),
+            "damage_flash_duration" => number!(damage_flash_duration, f32),
+            "damage_number_lifetime" => number!(damage_number_lifetime, f32),
+            "damage_number_rise" => number!(damage_number_rise, f32),
+            "enemy_death_duration" => number!(enemy_death_duration, f32),
+            "death_animation_duration" => number!(death_animation_duration, f32),
+            "death_screen_delay" => number!(death_screen_delay, f32),
+            "darkness_alpha" => number!(darkness_alpha, u8),
+            "room_light_speed" => number!(room_light_speed, f32),
+            "room_light_boost" => number!(room_light_boost, f32),
+            "room_fade_tiles" => number!(room_fade_tiles, i32),
+            "player_light_radius_tiles" => number!(player_light_radius_tiles, f32),
+            "player_light_peak" => number!(player_light_peak, f32),
+            "room_dim" => number!(room_dim, f32),
+            "light_radius_tiles" => number!(light_radius_tiles, f32),
+            "light_ray_count" => number!(light_ray_count, usize),
+            "player_ray_count" => number!(player_ray_count, usize),
+            "light_peak" => number!(light_peak, f32),
+            "lightmap_samples_per_tile" => number!(lightmap_samples_per_tile, f32),
+            "player_vision_tiles" => number!(player_vision_tiles, f32),
+            "nonroom_player_light_peak" => number!(nonroom_player_light_peak, f32),
+            "player_light_cone_degrees" => number!(player_light_cone_degrees, f32),
+            "player_light_inner_tiles" => number!(player_light_inner_tiles, f32),
+            "player_light_edge_fraction" => number!(player_light_edge_fraction, f32),
+            "light_source_tint_radius_tiles" => number!(light_source_tint_radius_tiles, f32),
+            "light_source_tint_alpha" => number!(light_source_tint_alpha, u8),
+            "damage_number_font_size" => number!(damage_number_font_size, u16),
+            "death_font_size" => number!(death_font_size, u16),
+            "death_message_font_size" => number!(death_message_font_size, u16),
+            "death_hint_font_size" => number!(death_hint_font_size, u16),
+            "title_scale" => number!(title_scale, f32),
+            "min_window_width" => number!(min_window_width, i32),
+            "min_window_height" => number!(min_window_height, i32),
+            "columns" => number!(columns, usize),
+            "rows" => number!(rows, usize),
+            "slot_size" => number!(slot_size, f32),
+            "slot_gap" => number!(slot_gap, f32),
+            "max_stack" => number!(max_stack, i32),
+            "starting_gold" => number!(starting_gold, i32),
+            "equipment_slot_size" => number!(equipment_slot_size, f32),
+            "equipment_slot_gap" => number!(equipment_slot_gap, f32),
+            "panel_padding" => number!(panel_padding, f32),
+            "panel_gap" => number!(panel_gap, f32),
+            "label_height" => number!(label_height, f32),
+            "star_size" => number!(star_size, f32),
+            "star_gap" => number!(star_gap, f32),
+            "attack_effect_duration" => number!(attack_effect_duration, f32),
+            "attack_effect_size" => number!(attack_effect_size, f32),
+            "transition_duration" => number!(transition_duration, f32),
+            "fountain_heal" => number!(fountain_heal, i32),
+            "fountain_cooldown" => number!(fountain_cooldown, f32),
+            "spike_damage" => number!(spike_damage, i32),
+            "spike_cooldown" => number!(spike_cooldown, f32),
+            "enemy_damage_cooldown" => number!(enemy_damage_cooldown, f32),
+            "enemy_spawn_delay" => number!(enemy_spawn_delay, f32),
+            "death_title" => text!(death_title),
+            "death_message" => text!(death_message),
+            "death_hint" => text!(death_hint),
+            "win_title" => text!(win_title),
+            "win_message" => text!(win_message),
+            "win_hint" => text!(win_hint),
+            _ => false,
         }
     }
 }
@@ -455,6 +489,17 @@ impl RuntimeConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_config_set_rejects_invalid_values() {
+        let mut config = RuntimeConfig::default();
+        assert!(config.set("enemy_spawn_delay", "0.5"));
+        assert!(!config.set("enemy_spawn_delay", "soon"));
+        assert!(config.set("death_title", "GAME OVER"));
+        assert!(!config.set("missing_key", "1"));
+        assert_eq!(config.enemy_spawn_delay, 0.5);
+        assert_eq!(config.death_title, "GAME OVER");
+    }
 
     #[test]
     fn runtime_config_parses_overrides() {

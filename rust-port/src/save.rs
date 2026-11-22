@@ -67,6 +67,8 @@ pub struct SaveState {
     pub map_objects: MapObjectSave,
     pub script_flags: Vec<String>,
     pub door_unlocked: bool,
+    #[serde(default)]
+    pub config: crate::config::RuntimeConfig,
 }
 
 pub fn slot_path(assets: &Assets, slot: usize) -> std::path::PathBuf {
@@ -102,6 +104,28 @@ pub fn timestamp() -> String {
         sod / 3600,
         (sod % 3600) / 60
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_state_round_trip_preserves_runtime_config() {
+        let mut config = crate::config::RuntimeConfig::default();
+        config.set("enemy_spawn_delay", "0.5");
+        config.set("death_title", "GAME OVER");
+        let state = SaveState { config, ..Default::default() };
+        let json = serde_json::to_string(&state).unwrap();
+        let loaded: SaveState = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.config.enemy_spawn_delay, 0.5);
+        assert_eq!(loaded.config.death_title, "GAME OVER");
+
+        let mut value = serde_json::to_value(&state).unwrap();
+        value.as_object_mut().unwrap().remove("config");
+        let legacy: SaveState = serde_json::from_value(value).unwrap();
+        assert_eq!(legacy.config.enemy_spawn_delay, 1.0);
+    }
 }
 
 fn civil_from_days(days: i64) -> (i64, i64, i64) {

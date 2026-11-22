@@ -169,7 +169,11 @@ pub struct Game {
     slot: usize,
     settings_index: usize,
     settings_message: String,
-    debug_last_change: String,
+    debug_minimized: bool,
+    debug_editor_open: bool,
+    debug_edit_index: usize,
+    debug_edit_value: Option<String>,
+    debug_message: String,
     available_scripts: Vec<String>,
     inventory_open: bool,
     inv_focus: InvFocus,
@@ -245,7 +249,11 @@ impl Game {
             slot: 1,
             settings_index: 0,
             settings_message: String::new(),
-            debug_last_change: String::new(),
+            debug_minimized: false,
+            debug_editor_open: false,
+            debug_edit_index: 0,
+            debug_edit_value: None,
+            debug_message: String::new(),
             available_scripts,
             inventory_open: false,
             inv_focus: InvFocus::Inventory,
@@ -328,7 +336,6 @@ impl Game {
         self.freecam = Vec2::ZERO;
         self.heart_shake_time = 0.0;
         self.camera = self.player.pos;
-        self.run_script("init");
         if let Some(name) = self.cli.script.clone() {
             self.run_script(&name);
         }
@@ -552,6 +559,9 @@ impl Game {
         }
 
         let pressed: Vec<KeyCode> = get_keys_pressed().into_iter().collect();
+        if self.handle_debug_keys(&pressed) {
+            return;
+        }
         if self.dialogue.open || self.options.open {
             self.update_box(&pressed, dt);
             return;
@@ -833,6 +843,101 @@ impl Game {
     fn show_options(&mut self, message: &str, choices: &[&str], pending: &str) {
         self.dialogue.show(message);
         self.options.show(choices, pending);
+    }
+
+    fn open_debug_editor(&mut self) {
+        let keys = config::keys();
+        self.debug_edit_index = config::modified()
+            .first()
+            .and_then(|(key, _, _)| keys.iter().position(|value| value == key))
+            .unwrap_or(0);
+        self.debug_editor_open = true;
+        self.debug_message.clear();
+    }
+
+    fn handle_debug_keys(&mut self, pressed: &[KeyCode]) -> bool {
+        if !self.cli.debug {
+            return false;
+        }
+        if self.debug_edit_value.is_none() {
+            while get_char_pressed().is_some() {}
+        }
+        if let Some(buffer) = self.debug_edit_value.as_mut() {
+            if let Some(ch) = get_char_pressed() {
+                buffer.push(ch);
+            }
+            if pressed.contains(&KeyCode::Backspace) {
+                buffer.pop();
+            }
+            if pressed.contains(&KeyCode::Escape) {
+                self.debug_edit_value = None;
+                self.debug_message.clear();
+                return true;
+            }
+            if pressed.contains(&KeyCode::Enter) {
+                let keys = config::keys();
+                if keys.is_empty() {
+                    self.debug_edit_value = None;
+                    return true;
+                }
+                let key = keys[self.debug_edit_index.min(keys.len() - 1)].clone();
+                let value = self.debug_edit_value.take().unwrap_or_default();
+                if config::set_value(&key, &value) {
+                    self.debug_message = format!("{key} = {value}");
+                    self.unsaved = true;
+                    log_line(&format!("[debug] {key}: {value}"));
+                } else {
+                    self.debug_message = format!("invalid value for {key}");
+                }
+                return true;
+            }
+            return true;
+        }
+        if pressed.contains(&KeyCode::M) {
+            self.debug_minimized = !self.debug_minimized;
+            self.debug_editor_open = false;
+            self.debug_message.clear();
+            return true;
+        }
+        if self.debug_minimized {
+            return false;
+        }
+        if self.debug_editor_open {
+            if pressed.contains(&KeyCode::Escape) {
+                self.debug_editor_open = false;
+                self.debug_message.clear();
+                return true;
+            }
+            let count = config::keys().len();
+            if count == 0 {
+                return true;
+            }
+            if pressed.contains(&KeyCode::Up) || pressed.contains(&KeyCode::W) {
+                self.debug_edit_index = (self.debug_edit_index + count - 1) % count;
+            }
+            if pressed.contains(&KeyCode::Down) || pressed.contains(&KeyCode::S) {
+                self.debug_edit_index = (self.debug_edit_index + 1) % count;
+            }
+            if pressed.contains(&KeyCode::Home) {
+                self.debug_edit_index = 0;
+            }
+            if pressed.contains(&KeyCode::End) {
+                self.debug_edit_index = count - 1;
+            }
+            if pressed.contains(&KeyCode::Enter) || pressed.contains(&KeyCode::E) {
+                let keys = config::keys();
+                let key = keys[self.debug_edit_index.min(keys.len() - 1)].clone();
+                self.debug_edit_value = Some(config::value(&key).unwrap_or_default());
+                self.debug_message = format!("editing {key}");
+                return true;
+            }
+            return true;
+        }
+        if pressed.contains(&KeyCode::E) {
+            self.open_debug_editor();
+            return true;
+        }
+        false
     }
 
     fn handle_game_keys(&mut self, pressed: &[KeyCode]) {
@@ -1242,10 +1347,12 @@ impl Game {
             },
             script_flags: self.script_flags.iter().cloned().collect(),
             door_unlocked: self.door_unlocked || self.screen == Screen::Won,
+            config: config::snapshot(),
         }
     }
 
     fn apply_save_state(&mut self, state: SaveState) {
+        config::restore(&state.config);
         let map_name = state.map;
         let map_index = config::MAP_FILES.iter().position(|m| *m == map_name).unwrap_or(0);
         self.load_map(map_index);
@@ -1318,76 +1425,99 @@ impl Game {
     }
 
     fn draw_debug(&self) {
-        let mut options: Vec<String> = Vec::new();
-        if self.cli.level_given {
-            options.push(format!("lv{}", self.cli.level + 1));
-        }
-        if self.cli.health_infinite {
-            options.push("health-infinite".into());
-        }
-        if self.cli.freecam {
-            options.push("freecam".into());
-        }
-        if self.cli.no_enemies {
-            options.push("no-enemies".into());
-        }
-        if self.cli.disable_player_light {
-            options.push("player-light off".into());
-        }
-        if self.cli.disable_map_light {
-            options.push("map-light off".into());
-        }
-        if self.cli.disable_rooms {
-            options.push("rooms off".into());
-        }
-        if self.cli.disable_fog_of_war {
-            options.push("fog off".into());
-        }
-        if self.cli.output_file {
-            options.push("output-file".into());
-        }
-        if let Some(script) = &self.cli.script {
-            options.push(format!("script={script}"));
-        }
-
-        let mut lines: Vec<String> = vec![
-            "DEBUG".into(),
-            format!("map  {}", self.map.name),
-            format!("pos  {:.0},{:.0}", self.player.pos.x, self.player.pos.y),
-        ];
-        if options.is_empty() {
-            lines.push("options  none".into());
-        } else {
-            lines.push("options".into());
-            lines.extend(options.into_iter().map(|option| format!("  {option}")));
-        }
-        if !self.debug_last_change.is_empty() {
-            lines.push(format!("changed  {}", self.debug_last_change));
-        }
-
+        let accent = Color::new(0.35, 1.0, 0.5, 1.0);
+        let background = Color::new(0.01, 0.06, 0.05, 0.94);
         let size = 12;
-        let pad = 8.0;
-        let line_h = 17.0;
+        let pad = 10.0;
+        let line_h = 18.0;
+        let right = screen_width() - 12.0;
+        let top = 12.0;
+
+        if self.debug_minimized {
+            let label = "DEBUG  [M] expand";
+            let width = measure_text(label, Some(&self.assets.font), 14, 1.0).width + pad * 2.0;
+            let height = 34.0;
+            draw_rectangle(right - width, top, width, height, background);
+            draw_rectangle_lines(right - width, top, width, height, 2.0, accent);
+            draw_text_at(label, right - pad, top + height / 2.0, 14, accent,
+                &self.assets.font, 1.0, 0.5);
+            return;
+        }
+
+        let modified = config::modified();
+        let mut lines: Vec<String> = vec!["DEBUG  [M] minimize  [E] edit".into()];
+        if modified.is_empty() {
+            lines.push("(no modified config values)".into());
+        } else {
+            lines.extend(modified.into_iter().map(|(key, current, original)| {
+                format!("{key}: {current} (Original {original})")
+            }));
+        }
         let width = lines
             .iter()
             .map(|line| measure_text(line, Some(&self.assets.font), size, 1.0).width)
             .fold(0.0, f32::max) + pad * 2.0;
         let height = lines.len() as f32 * line_h + pad * 2.0;
-        let right = screen_width() - 12.0;
-        let top = 12.0;
-        draw_rectangle(right - width, top, width, height, Color::new(0.02, 0.02, 0.04, 0.78));
-        draw_rectangle_lines(right - width, top, width, height, 1.0, INV_BORDER_COLOR);
+        draw_rectangle(right - width, top, width, height, background);
+        draw_rectangle_lines(right - width, top, width, height, 2.0, accent);
         for (index, line) in lines.iter().enumerate() {
-            draw_text_at(
-                line,
-                right - pad,
-                top + pad + line_h * (index as f32 + 0.5),
-                size,
-                TEXT_COLOR,
-                &self.assets.font,
-                1.0,
-                0.5,
-            );
+            let color = if index == 0 { accent } else { TEXT_COLOR };
+            draw_text_at(line, right - pad, top + pad + line_h * (index as f32 + 0.5),
+                size, color, &self.assets.font, 1.0, 0.5);
+        }
+        self.draw_config_editor();
+    }
+
+    fn draw_config_editor(&self) {
+        if !self.debug_editor_open {
+            return;
+        }
+        let keys = config::keys();
+        let size = 12;
+        let pad = 14.0;
+        let line_h = 18.0;
+        let per_page = 12usize;
+        let box_w = (screen_width() - 80.0).min(720.0);
+        let box_h = 150.0 + per_page as f32 * line_h;
+        let left = (screen_width() - box_w) / 2.0;
+        let top = (screen_height() - box_h) / 2.0;
+        draw_rectangle(0.0, 0.0, screen_width(), screen_height(), INV_DIM_COLOR);
+        draw_rectangle(left, top, box_w, box_h, PANEL_COLOR);
+        draw_rectangle_lines(left, top, box_w, box_h, 2.0, INV_ACCENT_COLOR);
+        draw_text_at("CONFIG EDITOR", left + pad, top + 28.0, 18, INV_ACCENT_COLOR,
+            &self.assets.font, 0.0, 0.5);
+        draw_text_at("UP/DOWN select   ENTER edit   ESC close", left + pad, top + 52.0,
+            11, MENU_MUTED_TEXT, &self.assets.font, 0.0, 0.5);
+
+        let count = keys.len();
+        if count > 0 {
+            let selected = self.debug_edit_index.min(count - 1);
+            let start = selected / per_page * per_page;
+            for (offset, key) in keys.iter().skip(start).take(per_page).enumerate() {
+                let y = top + 78.0 + offset as f32 * line_h;
+                if start + offset == selected {
+                    draw_rectangle(left + pad / 2.0, y - line_h * 0.4, box_w - pad, line_h,
+                        Color::new(0.16, 0.20, 0.32, 1.0));
+                }
+                let value = config::value(key).unwrap_or_default();
+                draw_text_at(&format!("{key}: {value}"), left + pad, y, size,
+                    if start + offset == selected { INV_ACCENT_COLOR } else { TEXT_COLOR },
+                    &self.assets.font, 0.0, 0.5);
+            }
+        }
+
+        let footer = if let Some(buffer) = &self.debug_edit_value {
+            let key = keys.get(self.debug_edit_index.min(count.saturating_sub(1)))
+                .cloned().unwrap_or_default();
+            format!("{key}: {buffer}_   ENTER save   ESC cancel")
+        } else if !self.debug_message.is_empty() {
+            self.debug_message.clone()
+        } else {
+            String::new()
+        };
+        if !footer.is_empty() {
+            draw_text_at(&footer, left + pad, top + box_h - 22.0, 12, INV_ACCENT_COLOR,
+                &self.assets.font, 0.0, 0.5);
         }
     }
 
@@ -2284,7 +2414,6 @@ impl Game {
             }
             _ => return,
         }
-        self.debug_last_change = format!("{}: {}", label, self.settings_rows()[index].1);
         if index != SETTING_DEBUG {
             self.cli.debug = true;
         }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use macroquad::prelude::*;
 use serde::Deserialize;
@@ -412,31 +412,56 @@ impl EnemyManager {
             return;
         }
         let player_tile = map.tile_of(player_pos);
+        let width = map.width.max(0) as usize;
+        let height = map.height.max(0) as usize;
+        if width == 0 || height == 0 || !map.in_bounds(player_tile) {
+            return;
+        }
+
+        let mut distance = vec![vec![-1i32; width]; height];
+        let mut queue = VecDeque::new();
+        distance[player_tile.1 as usize][player_tile.0 as usize] = 0;
+        queue.push_back(player_tile);
+        while let Some(tile) = queue.pop_front() {
+            let current = distance[tile.1 as usize][tile.0 as usize];
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let next = Tile(tile.0 + dx, tile.1 + dy);
+                if !map.in_bounds(next) || distance[next.1 as usize][next.0 as usize] >= 0 {
+                    continue;
+                }
+                if map.is_blocked(MapData::center_of(next)) {
+                    continue;
+                }
+                distance[next.1 as usize][next.0 as usize] = current + 1;
+                queue.push_back(next);
+            }
+        }
+
         for enemy in self.enemies.iter_mut() {
             if enemy.dying || enemy.moving {
                 continue;
             }
             let from = map.tile_of(enemy.pos);
-            let dx = player_tile.0 - from.0;
-            let dy = player_tile.1 - from.1;
-            if dx == 0 && dy == 0 {
+            if !map.in_bounds(from) {
                 continue;
             }
-            let steps = if dx.abs() >= dy.abs() {
-                [(dx.signum(), 0), (0, dy.signum())]
-            } else {
-                [(0, dy.signum()), (dx.signum(), 0)]
-            };
-            for (sx, sy) in steps {
-                if sx == 0 && sy == 0 {
+            let current = distance[from.1 as usize][from.0 as usize];
+            let mut best: Option<(i32, Tile)> = None;
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let next = Tile(from.0 + dx, from.1 + dy);
+                if !map.in_bounds(next) {
                     continue;
                 }
-                let next = Tile(from.0 + sx, from.1 + sy);
-                let target = MapData::center_of(next);
-                if !map.is_blocked(target) {
-                    enemy.step_to(target);
-                    break;
+                let candidate = distance[next.1 as usize][next.0 as usize];
+                if candidate < 0 || (current >= 0 && candidate >= current) {
+                    continue;
                 }
+                if best.map_or(true, |(value, _)| candidate < value) {
+                    best = Some((candidate, next));
+                }
+            }
+            if let Some((_, next)) = best {
+                enemy.step_to(MapData::center_of(next));
             }
         }
     }
@@ -606,6 +631,30 @@ mod tests {
     }
 
     #[test]
+    fn steps_around_walls_toward_player() {
+        let mut map = empty_map();
+        map.solid.insert(Tile(3, 2));
+        map.solid.insert(Tile(2, 3));
+        let mut manager = EnemyManager {
+            enemies: Vec::new(),
+            mobs: HashMap::new(),
+            spawn_points: Vec::new(),
+            armed: Vec::new(),
+            spawned: Vec::new(),
+            pending: Vec::new(),
+            disabled: false,
+        };
+        manager.enemies.push(Enemy::new("snake", MapData::center_of(Tile(2, 2))));
+        manager.step_toward_player(MapData::center_of(Tile(5, 5)), &map);
+        let enemy = &manager.enemies[0];
+        assert!(enemy.moving);
+        assert_ne!(enemy.target, enemy.pos);
+        assert!(!map.is_blocked(enemy.target));
+        assert_ne!(enemy.target, MapData::center_of(Tile(3, 2)));
+        assert_ne!(enemy.target, MapData::center_of(Tile(2, 3)));
+    }
+
+    #[test]
     fn trigger_arms_from_target_tile() {
         let mut manager = EnemyManager {
             enemies: Vec::new(),
@@ -650,9 +699,9 @@ mod tests {
         assert!(manager.armed[0]);
         manager.update_triggers(0.016, Tile(3, 2), &empty_map());
         assert!(manager.enemies.is_empty());
-        manager.update_triggers(1.0, Tile(3, 2), &empty_map());
+        manager.update_triggers(0.4, Tile(3, 2), &empty_map());
         assert!(manager.enemies.is_empty());
-        manager.update_triggers(1.1, Tile(3, 2), &empty_map());
+        manager.update_triggers(0.7, Tile(3, 2), &empty_map());
         assert_eq!(manager.enemies.len(), 1);
         assert!(manager.spawned[0]);
     }
@@ -685,10 +734,12 @@ mod tests {
 
         manager.update_triggers(0.016, Tile(2, 2), &empty_map());
         manager.update_triggers(0.016, Tile(3, 2), &empty_map());
+        manager.update_triggers(0.9, Tile(3, 2), &empty_map());
         manager.update_triggers(0.016, Tile(2, 2), &empty_map());
-        manager.update_triggers(5.0, Tile(3, 2), &empty_map());
+        manager.update_triggers(0.016, Tile(3, 2), &empty_map());
+        manager.update_triggers(0.9, Tile(3, 2), &empty_map());
         assert!(manager.enemies.is_empty());
-        manager.update_triggers(2.0, Tile(3, 2), &empty_map());
+        manager.update_triggers(0.2, Tile(3, 2), &empty_map());
         assert_eq!(manager.enemies.len(), 1);
     }
 
