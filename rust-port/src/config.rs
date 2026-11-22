@@ -35,6 +35,7 @@ pub const DAMAGE_NUMBER_LIFETIME: f32 = 0.9;
 pub const DAMAGE_NUMBER_RISE: f32 = 55.0;
 pub const ENEMY_DEATH_DURATION: f32 = 0.45;
 pub const ENEMY_SPAWN_DELAY: f32 = 1.0;
+pub const ENEMY_SPAWN_IDLE: f32 = 2.0;
 pub const DEATH_ANIMATION_DURATION: f32 = 0.6;
 pub const DEATH_SCREEN_DELAY: f32 = 5.0;
 pub const DEATH_TITLE: &str = "YOU DIED";
@@ -115,6 +116,10 @@ pub const MENU_BACKGROUND: Color = Color::new(10.0 / 255.0, 12.0 / 255.0, 20.0 /
 static RUNTIME: AtomicPtr<RuntimeConfig> = AtomicPtr::new(ptr::null_mut());
 static ORIGINAL: AtomicPtr<RuntimeConfig> = AtomicPtr::new(ptr::null_mut());
 
+fn default_enemy_spawn_idle() -> f32 {
+    ENEMY_SPAWN_IDLE
+}
+
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct RuntimeConfig {
     pub version: String,
@@ -187,6 +192,8 @@ pub struct RuntimeConfig {
     pub spike_cooldown: f32,
     pub enemy_damage_cooldown: f32,
     pub enemy_spawn_delay: f32,
+    #[serde(default = "default_enemy_spawn_idle")]
+    pub enemy_spawn_idle: f32,
     pub death_title: String,
     pub death_message: String,
     pub death_hint: String,
@@ -268,6 +275,7 @@ impl Default for RuntimeConfig {
             spike_cooldown: SPIKE_COOLDOWN,
             enemy_damage_cooldown: ENEMY_DAMAGE_COOLDOWN,
             enemy_spawn_delay: ENEMY_SPAWN_DELAY,
+            enemy_spawn_idle: ENEMY_SPAWN_IDLE,
             death_title: DEATH_TITLE.into(),
             death_message: DEATH_MESSAGE.into(),
             death_hint: DEATH_HINT.into(),
@@ -486,6 +494,7 @@ impl RuntimeConfig {
             "spike_cooldown" => number!(spike_cooldown, f32),
             "enemy_damage_cooldown" => number!(enemy_damage_cooldown, f32),
             "enemy_spawn_delay" => number!(enemy_spawn_delay, f32),
+            "enemy_spawn_idle" => number!(enemy_spawn_idle, f32),
             "death_title" => text!(death_title),
             "death_message" => text!(death_message),
             "death_hint" => text!(death_hint),
@@ -506,9 +515,12 @@ mod tests {
         let mut config = RuntimeConfig::default();
         assert!(config.set("enemy_spawn_delay", "0.5"));
         assert!(!config.set("enemy_spawn_delay", "soon"));
+        assert!(config.set("enemy_spawn_idle", "0.25"));
+        assert!(!config.set("enemy_spawn_idle", "idle"));
         assert!(config.set("death_title", "GAME OVER"));
         assert!(!config.set("missing_key", "1"));
         assert_eq!(config.enemy_spawn_delay, 0.5);
+        assert_eq!(config.enemy_spawn_idle, 0.25);
         assert_eq!(config.death_title, "GAME OVER");
     }
 

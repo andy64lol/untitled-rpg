@@ -37,7 +37,8 @@ const SETTING_FOG: usize = 7;
 const SETTING_NO_ENEMIES: usize = 8;
 const SETTING_DEBUG: usize = 9;
 const SETTING_OUTPUT: usize = 10;
-const SETTING_BACK: usize = 11;
+const SETTING_SHOW_OBJECTS: usize = 11;
+const SETTING_BACK: usize = 12;
 
 #[derive(Clone, Debug)]
 struct Dialogue {
@@ -153,6 +154,8 @@ pub struct Game {
     dialogue: Dialogue,
     options: Options,
     scripts: Vec<ScriptRunner>,
+    player_move_script: Option<ScriptRunner>,
+    script_move: Option<String>,
     script_flags: HashSet<String>,
     chests_opened: Vec<bool>,
     fake_opened: Vec<bool>,
@@ -160,6 +163,7 @@ pub struct Game {
     plates: Vec<bool>,
     room_light: Vec<f32>,
     room_light_ready: bool,
+    darkness_texture: Option<Texture2D>,
     visible_tiles: HashSet<Tile>,
     visible_rooms: Vec<String>,
     damage_numbers: Vec<DamageNumber>,
@@ -191,7 +195,6 @@ pub struct Game {
     heart_shake_time: f32,
     rng_state: u64,
     spike_timer: f32,
-    enemy_damage_timer: f32,
     fountain_timer: f32,
     door_unlocked: bool,
     slot_menu_message: String,
@@ -234,6 +237,8 @@ impl Game {
             dialogue: Dialogue::new(),
             options: Options::new(),
             scripts: Vec::new(),
+            player_move_script: None,
+            script_move: None,
             script_flags: HashSet::new(),
             chests_opened: vec![false; chest_count],
             fake_opened: vec![false; fake_count],
@@ -241,6 +246,7 @@ impl Game {
             plates: vec![false; plate_count],
             room_light,
             room_light_ready: false,
+            darkness_texture: None,
             visible_tiles: HashSet::new(),
             visible_rooms: Vec::new(),
             damage_numbers: Vec::new(),
@@ -275,14 +281,13 @@ impl Game {
                 .map(|duration| duration.as_nanos() as u64 | 1)
                 .unwrap_or(0x9e3779b97f4a7c15),
             spike_timer: 0.0,
-            enemy_damage_timer: 0.0,
             fountain_timer: 0.0,
             door_unlocked: false,
             slot_menu_message: String::new(),
             assets,
             cli,
         };
-        if game.cli.level_given {
+        if game.cli.level_given || game.cli.player_moves.is_some() {
             game.start_game();
         }
         game
@@ -321,6 +326,8 @@ impl Game {
         self.inventory.add("stainless_steel_shield", 1, false);
         self.equipment = Equipment::new();
         self.scripts.clear();
+        self.player_move_script = None;
+        self.script_move = None;
         self.chests_opened.iter_mut().for_each(|v| *v = false);
         self.fake_opened.iter_mut().for_each(|v| *v = false);
         self.switches.iter_mut().for_each(|v| *v = false);
@@ -330,7 +337,6 @@ impl Game {
         self.death_timer = None;
         self.damage_numbers.clear();
         self.attack_effects.clear();
-        self.enemy_damage_timer = 0.0;
         self.door_unlocked = false;
         self.dialogue.close();
         self.options.close();
@@ -344,8 +350,14 @@ impl Game {
         self.freecam = Vec2::ZERO;
         self.heart_shake_time = 0.0;
         self.camera = self.player.pos;
-        if let Some(name) = self.cli.script.clone() {
-            self.run_script(&name);
+        if self.cli.script_given || self.cli.player_moves.is_none() {
+            if let Some(name) = self.cli.script.clone() {
+                self.run_script(&name);
+            }
+        }
+        if let Some(name) = self.cli.player_moves.clone() {
+            log_line(&format!("[player-moves] running {name}"));
+            self.player_move_script = ScriptRunner::load(&self.assets, &name);
         }
     }
 
@@ -363,7 +375,6 @@ impl Game {
         self.room_light_ready = false;
         self.visible_tiles.clear();
         self.visible_rooms.clear();
-        self.enemy_damage_timer = 0.0;
         self.fountain_timer = 0.0;
         self.door_unlocked = false;
         self.player.reset(self.map.spawn);
@@ -378,7 +389,10 @@ impl Game {
         duration: f32,
     ) -> Option<usize> {
         let duration = duration.max(f32::EPSILON);
-        match (*transition)? {
+        let Some(current) = *transition else {
+            return None;
+        };
+        match current {
             MapTransition::FadeOut { elapsed, target } => {
                 let elapsed = elapsed + dt;
                 if elapsed < duration {
@@ -446,9 +460,31 @@ impl Game {
                 index += 1;
             }
         }
+        if let Some(action) = self.player_move_action(dt) {
+            actions.push(action);
+        }
         for action in actions {
             self.apply_script_action(action);
         }
+    }
+
+    fn player_move_action(&mut self, dt: f32) -> Option<ScriptAction> {
+        let ctx = self.script_context();
+        let dialogue_open = self.dialogue.open;
+        let assets = &self.assets;
+        let load = |name: &str| ScriptRunner::load(assets, name);
+        let script = self.player_move_script.as_mut()?;
+        let action = script.update(dt, &ctx, dialogue_open, &load);
+        if matches!(action, ScriptAction::End) {
+            self.player_move_script = None;
+            self.script_move = None;
+            log_line("[player-moves] finished");
+            return None;
+        }
+        if matches!(action, ScriptAction::None) {
+            return None;
+        }
+        Some(action)
     }
 
     fn apply_script_action(&mut self, action: ScriptAction) {
@@ -493,14 +529,16 @@ impl Game {
                 self.unsaved = true;
             }
             ScriptAction::Spawn { id, col, row } => {
-                let pos = match (col, row) {
-                    (Some(c), Some(r)) => vec2(
+                if let (Some(c), Some(r)) = (col, row) {
+                    let pos = vec2(
                         c as f32 * TILE_SIZE + TILE_SIZE / 2.0,
                         r as f32 * TILE_SIZE + TILE_SIZE / 2.0,
-                    ),
-                    _ => vec2(self.player.pos.x + TILE_SIZE, self.player.pos.y),
-                };
-                self.enemies.spawn(&id, pos);
+                    );
+                    self.enemies.spawn(&id, pos);
+                } else {
+                    self.enemies
+                        .spawn_at_marker("script", Some(&id), Some(self.player.pos));
+                }
             }
             ScriptAction::Flag(name) => {
                 self.script_flags.insert(name);
@@ -510,6 +548,24 @@ impl Game {
                 self.script_flags.remove(&name);
                 self.unsaved = true;
             }
+            ScriptAction::MovePlayer(dir) => {
+                if let Some(facing) = direction_name(&dir) {
+                    self.script_move = Some(facing.to_string());
+                } else {
+                    log_line(&format!("[script] invalid move direction: {dir}"));
+                }
+            }
+            ScriptAction::StopMove => self.script_move = None,
+            ScriptAction::Face(dir) => {
+                if let Some(facing) = direction_name(&dir) {
+                    self.player.set_facing(facing);
+                } else {
+                    log_line(&format!("[script] invalid face direction: {dir}"));
+                }
+            }
+            ScriptAction::Interact => self.interact(),
+            ScriptAction::Attack => self.player_attack(),
+            ScriptAction::Log(message) => self.log_script_state(&message),
             ScriptAction::End | ScriptAction::None => {}
         }
     }
@@ -520,6 +576,39 @@ impl Game {
             pos: self.player.pos + vec2(0.0, -20.0),
             timer: crate::config::get().damage_number_lifetime,
         });
+    }
+
+    fn player_attack(&mut self) {
+        if self.player.moving || self.player.dead {
+            return;
+        }
+        let pos = self.player.attack_position();
+        self.attack_effects.push(AttackEffect {
+            pos,
+            timer: crate::config::get().attack_effect_duration,
+        });
+        self.enemies.attack_at(pos);
+    }
+
+    fn log_script_state(&self, message: &str) {
+        if !message.trim().is_empty() {
+            log_line(&format!("[script] {message}"));
+            return;
+        }
+        let tile = self.map.tile_of(self.player.pos);
+        log_line(&format!(
+            "[script] state: pos=({:.0}, {:.0}) tile=({}, {}) facing={} hp={}/{} enemies={} move={} map={}",
+            self.player.pos.x,
+            self.player.pos.y,
+            tile.0,
+            tile.1,
+            self.player.facing,
+            self.player.hp,
+            self.player.max_hp,
+            self.enemies.enemies.len(),
+            self.script_move.as_deref().unwrap_or("none"),
+            self.map.name
+        ));
     }
 
     fn blocked_tiles(&self) -> HashSet<Tile> {
@@ -650,13 +739,17 @@ impl Game {
         }
 
         let blocked = self.blocked_tiles();
-        let move_dir = if down.contains(&KeyCode::W) {
+        let move_keys = match self.script_move.as_deref().and_then(movement_key) {
+            Some(key) => vec![key],
+            None => down.clone(),
+        };
+        let move_dir = if move_keys.contains(&KeyCode::W) {
             Some((0, -1, "up"))
-        } else if down.contains(&KeyCode::S) {
+        } else if move_keys.contains(&KeyCode::S) {
             Some((0, 1, "down"))
-        } else if down.contains(&KeyCode::A) {
+        } else if move_keys.contains(&KeyCode::A) {
             Some((-1, 0, "left"))
-        } else if down.contains(&KeyCode::D) {
+        } else if move_keys.contains(&KeyCode::D) {
             Some((1, 0, "right"))
         } else {
             None
@@ -684,7 +777,7 @@ impl Game {
             }
         }
         self.enemies.update(dt);
-        let moved = self.player.update(dt, &self.map, &blocked, &down, &pressed);
+        let moved = self.player.update(dt, &self.map, &blocked, &move_keys, &pressed);
         if !self.cli.freecam {
             self.camera = self.player.pos;
         }
@@ -728,15 +821,10 @@ impl Game {
         }
     }
 
-    fn enemy_damage(&mut self, dt: f32) {
-        let Some((damage, damage_speed)) = self.enemies.contact_attack(self.player.pos) else {
-            self.enemy_damage_timer = 0.0;
+    fn enemy_damage(&mut self, _dt: f32) {
+        let Some((index, damage, damage_speed)) = self.enemies.contact_attack(self.player.pos) else {
             return;
         };
-        if self.enemy_damage_timer > 0.0 {
-            self.enemy_damage_timer = (self.enemy_damage_timer - dt).max(0.0);
-            return;
-        }
         if damage > 0 {
             let (_, defense) = self.equipment.combat_stats(&self.items);
             let dealt = self.player.take_damage(damage, defense);
@@ -744,11 +832,11 @@ impl Game {
                 self.spawn_damage_number(dealt);
             }
         }
-        self.enemy_damage_timer = if damage_speed > 0.0 {
-            damage_speed / 10.0
-        } else {
-            crate::config::get().enemy_damage_cooldown
-        };
+        let cooldown = crate::enemies::attack_cooldown(
+            damage_speed,
+            crate::config::get().enemy_damage_cooldown,
+        );
+        self.enemies.set_attack_cooldown(index, cooldown);
     }
 
     fn log_rooms(&self) {
@@ -1020,13 +1108,7 @@ impl Game {
         }
         for key in pressed {
             match key {
-                KeyCode::Z => {
-                    if !self.player.moving && !self.player.dead {
-                        let pos = self.player.attack_position();
-                        self.attack_effects.push(AttackEffect { pos, timer: crate::config::get().attack_effect_duration });
-                        self.enemies.attack_at(pos);
-                    }
-                }
+                KeyCode::Z => self.player_attack(),
                 KeyCode::E | KeyCode::Enter => self.interact(),
                 KeyCode::I => {
                     self.screen = Screen::Game;
@@ -1039,7 +1121,7 @@ impl Game {
                     self.screen = Screen::Menu;
                 }
                 KeyCode::H => {
-                    self.enemies.spawn_near_player(self.player.pos, &self.map);
+                    self.enemies.spawn_at_marker("debug H", None, Some(self.player.pos));
                 }
                 _ => {}
             }
@@ -1452,7 +1534,7 @@ impl Game {
         self.plates.resize(self.map.objects_named_prefix("pressurePlate").len(), false);
         self.enemies.enemies.clear();
         for enemy in state.enemies.enemies {
-            self.enemies.spawn(&enemy.kind, vec2(enemy.x, enemy.y));
+            self.enemies.spawn_from_with_idle("save", &enemy.kind, vec2(enemy.x, enemy.y), 0.0);
         }
         for index in state.enemies.spawned {
             if let Some(value) = self.enemies.spawned.get_mut(index) {
@@ -1601,7 +1683,7 @@ impl Game {
             "WASD move   E/Enter interact   Z attack",
             "I inventory   Tab switch inventory/equipment",
             "Arrow keys navigate menus and inventory",
-            "H spawn a nearby enemy",
+            "H spawn at nearest enemy marker",
             "F1 toggle this help   Esc/Enter close",
             "M minimize debug   E edit config while expanded",
             "R reset selected config   A reset all config",
@@ -1683,7 +1765,7 @@ impl Game {
         });
     }
 
-    fn draw_game(&self) {
+    fn draw_game(&mut self) {
         self.set_world_camera();
         self.map.draw(&self.assets.tiles);
         let visible = if self.room_mode() && !self.cli.disable_fog_of_war {
@@ -1695,6 +1777,7 @@ impl Game {
         self.player.draw(&self.assets);
         self.draw_attack_effects();
         self.draw_fog();
+        self.draw_objects();
         self.draw_damage_numbers();
         set_default_camera();
         self.draw_hud();
@@ -1956,7 +2039,7 @@ impl Game {
         value.max(inner)
     }
 
-    fn draw_nonroom_darkness(&self) {
+    fn draw_fog(&mut self) {
         let cfg = config::get();
         let tw = self.map.tile_width;
         let th = self.map.tile_height;
@@ -1968,8 +2051,11 @@ impl Game {
         let right = ((target.x + half_w + tw) / step).ceil() * step;
         let top = ((target.y - half_h - th) / step).floor() * step;
         let bottom = ((target.y + half_h + th) / step).ceil() * step;
+        let tex_cols = ((right - left) / step).round().max(1.0) as u16;
+        let tex_rows = ((bottom - top) / step).round().max(1.0) as u16;
+        let room = self.room_mode();
 
-        let lights = if self.cli.disable_map_light {
+        let lights = if room || self.cli.disable_map_light {
             Vec::new()
         } else {
             self.light_emit_positions()
@@ -1991,7 +2077,7 @@ impl Game {
             (self.player.pos.x / (tw / 4.0)).round() * (tw / 4.0),
             (self.player.pos.y / (th / 4.0)).round() * (th / 4.0),
         );
-        let player_rays = if self.cli.disable_player_light {
+        let player_rays = if room || self.cli.disable_player_light {
             Vec::new()
         } else {
             let offset = self.player.facing_offset();
@@ -2043,105 +2129,161 @@ impl Game {
 
         let half_angle = cfg.player_light_cone_degrees.to_radians() / 2.0;
         let inner_radius = cfg.player_light_inner_tiles * tw;
-        let mut y = top + step / 2.0;
-        while y <= bottom {
-            let mut x = left + step / 2.0;
-            while x <= right {
+        let glow_radius = cfg.light_source_tint_radius_tiles * tw;
+        let room_radius = cfg.player_light_radius_tiles * tw;
+        let room_radius_sq = room_radius * room_radius;
+        let cols = self.map.width as usize;
+        let rows = self.map.height as usize;
+        let mut pixels = vec![0u8; tex_cols as usize * tex_rows as usize * 4];
+
+        for row in 0..tex_rows as usize {
+            let y = top + (row as f32 + 0.5) * step;
+            for col in 0..tex_cols as usize {
+                let x = left + (col as f32 + 0.5) * step;
                 let mut light = 0.0f32;
-                let mut glow = 0.0f32;
-                if !player_rays.is_empty() {
-                    light += Self::cone_light_at(
-                        x - player_origin.x,
-                        y - player_origin.y,
-                        player_facing,
-                        &player_rays,
-                        cfg.player_vision_tiles * tw,
-                        cfg.nonroom_player_light_peak,
-                        half_angle,
-                        cfg.player_light_edge_fraction,
-                        inner_radius,
-                    );
-                }
-                for (index, rays) in light_rays.iter().enumerate() {
-                    let light_pos = lights[visible_lights[index]];
-                    let dx = x - light_pos.x;
-                    let dy = y - light_pos.y;
-                    light += Self::radial_light_at(dx, dy, rays, light_radius, cfg.light_peak);
-                    let glow_radius = cfg.light_source_tint_radius_tiles * tw;
-                    let distance = (dx * dx + dy * dy).sqrt();
-                    if distance < glow_radius {
-                        let kernel = 1.0 - distance / glow_radius;
-                        glow += kernel * kernel;
+                let mut warm = 0.0f32;
+                if room {
+                    let tile_col = (x / tw).floor() as i32;
+                    let tile_row = (y / th).floor() as i32;
+                    if tile_col >= 0
+                        && tile_row >= 0
+                        && (tile_col as usize) < cols
+                        && (tile_row as usize) < rows
+                    {
+                        light = self.room_light[tile_row as usize * cols + tile_col as usize];
                     }
+                    if !self.cli.disable_player_light {
+                        let dx = x - self.player.pos.x;
+                        let dy = y - self.player.pos.y;
+                        let distance_sq = dx * dx + dy * dy;
+                        if distance_sq < room_radius_sq {
+                            light += cfg.player_light_peak * (1.0 - distance_sq.sqrt() / room_radius);
+                        }
+                    }
+                    light = light.clamp(0.0, 1.0);
+                } else {
+                    if !player_rays.is_empty() {
+                        light += Self::cone_light_at(
+                            x - player_origin.x,
+                            y - player_origin.y,
+                            player_facing,
+                            &player_rays,
+                            cfg.player_vision_tiles * tw,
+                            cfg.nonroom_player_light_peak,
+                            half_angle,
+                            cfg.player_light_edge_fraction,
+                            inner_radius,
+                        );
+                    }
+                    let mut glow = 0.0f32;
+                    for (index, rays) in light_rays.iter().enumerate() {
+                        let light_pos = lights[visible_lights[index]];
+                        let dx = x - light_pos.x;
+                        let dy = y - light_pos.y;
+                        light += Self::radial_light_at(dx, dy, rays, light_radius, cfg.light_peak);
+                        let distance = (dx * dx + dy * dy).sqrt();
+                        if distance < glow_radius {
+                            let kernel = 1.0 - distance / glow_radius;
+                            glow = glow.max(kernel * kernel);
+                        }
+                    }
+                    light = light.clamp(0.0, 1.0);
+                    warm = (glow * light * 1.5).clamp(0.0, 1.0);
                 }
-                light = light.clamp(0.0, 1.0);
-                glow = (glow * light * 1.5).clamp(0.0, 1.0);
-                let alpha = cfg.darkness_alpha as f32 * (1.0 - light) * (1.0 - glow)
-                    + cfg.light_source_tint_alpha as f32 * glow;
-                if alpha > 1.0 {
-                    let tint = LIGHT_SOURCE_TINT_COLOR;
-                    draw_rectangle(
-                        x - step / 2.0,
-                        y - step / 2.0,
-                        step,
-                        step,
-                        Color::new(tint.r * glow, tint.g * glow, tint.b * glow, alpha / 255.0),
-                    );
-                }
-                x += step;
+
+                let alpha = if room {
+                    cfg.darkness_alpha as f32 * (1.0 - light)
+                } else {
+                    cfg.darkness_alpha as f32 * (1.0 - light) * (1.0 - warm)
+                        + cfg.light_source_tint_alpha as f32 * warm
+                };
+                let tint = LIGHT_SOURCE_TINT_COLOR;
+                let index = (row * tex_cols as usize + col) * 4;
+                pixels[index] = (tint.r * 255.0 * warm) as u8;
+                pixels[index + 1] = (tint.g * 255.0 * warm) as u8;
+                pixels[index + 2] = (tint.b * 255.0 * warm) as u8;
+                pixels[index + 3] = alpha.clamp(0.0, 255.0) as u8;
             }
-            y += step;
         }
+
+        let size = self
+            .darkness_texture
+            .as_ref()
+            .map(|texture| (texture.width() as u16, texture.height() as u16));
+        let texture = if size == Some((tex_cols, tex_rows)) {
+            let texture = self.darkness_texture.as_ref().expect("darkness texture");
+            texture.update_from_bytes(tex_cols as u32, tex_rows as u32, &pixels);
+            texture.clone()
+        } else {
+            let texture = Texture2D::from_rgba8(tex_cols, tex_rows, &pixels);
+            texture.set_filter(FilterMode::Linear);
+            self.darkness_texture = Some(texture.clone());
+            texture
+        };
+        draw_texture_ex(
+            &texture,
+            left,
+            top,
+            WHITE,
+            DrawTextureParams {
+                dest_size: Some(vec2(right - left, bottom - top)),
+                ..Default::default()
+            },
+        );
     }
 
-    fn draw_fog(&self) {
-        if !self.room_mode() {
-            self.draw_nonroom_darkness();
+    fn draw_objects(&self) {
+        if !self.cli.show_objects {
             return;
         }
         let target = self.camera_target();
-        let half_w = screen_width() / (2.0 * crate::config::get().camera_zoom);
-        let half_h = screen_height() / (2.0 * crate::config::get().camera_zoom);
-        let step = TILE_SIZE / 4.0;
-        let left = ((target.x - half_w - TILE_SIZE) / step).floor() * step;
-        let right = ((target.x + half_w + TILE_SIZE) / step).ceil() * step;
-        let top = ((target.y - half_h - TILE_SIZE) / step).floor() * step;
-        let bottom = ((target.y + half_h + TILE_SIZE) / step).ceil() * step;
-        let radius = crate::config::get().player_light_radius_tiles * TILE_SIZE;
-        let radius_sq = radius * radius;
-        let cols = self.map.width;
-        let rows = self.map.height;
-        let mut y = top + step / 2.0;
-        while y < bottom {
-            let row = (y / TILE_SIZE).floor() as i32;
-            let mut x = left + step / 2.0;
-            while x < right {
-                let col = (x / TILE_SIZE).floor() as i32;
-                let mut level = 0.0;
-                if col >= 0 && row >= 0 && col < cols && row < rows {
-                    level = self.room_light[(row * cols + col) as usize];
-                }
-                if !self.cli.disable_player_light {
-                    let dx = x - self.player.pos.x;
-                    let dy = y - self.player.pos.y;
-                    let distance_sq = dx * dx + dy * dy;
-                    if distance_sq < radius_sq {
-                        level += crate::config::get().player_light_peak * (1.0 - distance_sq.sqrt() / radius);
-                    }
-                }
-                let alpha = (crate::config::get().darkness_alpha as f32 * (1.0 - level.min(1.0))) as u8;
-                if alpha > 2 {
-                    draw_rectangle(
-                        x - step / 2.0,
-                        y - step / 2.0,
-                        step,
-                        step,
-                        Color::new(0.0, 0.0, 0.0, alpha as f32 / 255.0),
-                    );
-                }
-                x += step;
+        let half_w = screen_width() / (2.0 * config::get().camera_zoom);
+        let half_h = screen_height() / (2.0 * config::get().camera_zoom);
+        let margin = TILE_SIZE * 2.0;
+        let label_color = Color::new(1.0, 1.0, 1.0, 0.95);
+        for object in &self.map.objects {
+            if object.x < target.x - half_w - margin
+                || object.x > target.x + half_w + margin
+                || object.y < target.y - half_h - margin
+                || object.y > target.y + half_h + margin
+            {
+                continue;
             }
-            y += step;
+            let color = if object.name.starts_with("spawnEnemy") {
+                Color::new(1.0, 0.35, 0.25, 0.9)
+            } else if object.name.starts_with("chest") || object.name.starts_with("fakeChest") {
+                Color::new(1.0, 0.82, 0.25, 0.9)
+            } else if object.name.starts_with("fountain") {
+                Color::new(0.3, 0.7, 1.0, 0.9)
+            } else if object.name.starts_with("switch") || object.name.starts_with("pressurePlate") {
+                Color::new(0.35, 1.0, 0.55, 0.9)
+            } else {
+                Color::new(0.85, 0.85, 0.95, 0.9)
+            };
+            draw_circle(object.x, object.y, 5.0, color);
+            draw_circle_lines(
+                object.x,
+                object.y,
+                5.0,
+                1.0,
+                Color::new(0.0, 0.0, 0.0, 0.8),
+            );
+            let tile = self.map.tile_of(vec2(object.x, object.y));
+            let label = if object.user_type.is_empty() {
+                format!("{} ({},{})", object.name, tile.0, tile.1)
+            } else {
+                format!("{}:{} ({},{})", object.name, object.user_type, tile.0, tile.1)
+            };
+            draw_text_at(
+                &label,
+                object.x + 8.0,
+                object.y - 6.0,
+                8,
+                label_color,
+                &self.assets.font,
+                0.0,
+                1.0,
+            );
         }
     }
 
@@ -2450,6 +2592,7 @@ impl Game {
             ("Enemies".into(), on_off(!self.cli.no_enemies)),
             ("Debug overlay".into(), on_off(self.cli.debug)),
             ("Output log file".into(), on_off(self.cli.output_file)),
+            ("Show objects".into(), on_off(self.cli.show_objects)),
             ("Back".into(), String::new()),
         ]
     }
@@ -2518,6 +2661,7 @@ impl Game {
                 self.cli.output_file = !self.cli.output_file;
                 crate::set_log_output(self.cli.output_file);
             }
+            SETTING_SHOW_OBJECTS => self.cli.show_objects = !self.cli.show_objects,
             _ => return,
         }
         if index != SETTING_DEBUG {
@@ -2806,6 +2950,26 @@ impl Game {
     }
 }
 
+fn direction_name(value: &str) -> Option<&'static str> {
+    match value.to_ascii_lowercase().as_str() {
+        "up" | "u" | "w" | "north" => Some("up"),
+        "down" | "d" | "s" | "south" => Some("down"),
+        "left" | "l" | "a" | "west" => Some("left"),
+        "right" | "r" | "east" => Some("right"),
+        _ => None,
+    }
+}
+
+fn movement_key(value: &str) -> Option<KeyCode> {
+    match direction_name(value)? {
+        "up" => Some(KeyCode::W),
+        "down" => Some(KeyCode::S),
+        "left" => Some(KeyCode::A),
+        "right" => Some(KeyCode::D),
+        _ => None,
+    }
+}
+
 fn blocked_tiles_for(map: &MapData, door_unlocked: bool) -> HashSet<Tile> {
     let mut blocked = HashSet::new();
     for prefix in ["chest", "fakeChest", "fountain", "switch", "pressurePlate"] {
@@ -2839,6 +3003,9 @@ mod tests {
 
     #[test]
     fn map_transition_swaps_when_fade_out_finishes() {
+        let mut inactive = None;
+        assert_eq!(Game::advance_transition(&mut inactive, 1.0, 1.0), None);
+
         let mut transition = Some(MapTransition::FadeOut {
             elapsed: 0.0,
             target: 2,

@@ -1,0 +1,8 @@
+// Example player-move replay:
+//   cargo run --manifest-path rust-port/Cargo.toml -- --player-moves moves --output-file
+
+movePlayer("right");
+tick(30);
+stopMove();
+log("replay finished");
+end();

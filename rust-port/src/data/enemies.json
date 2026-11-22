@@ -10,9 +10,9 @@
   "snake": {
     "name": "Snake",
     "id": "snake",
-    "speed": 190,
-    "damage": 20,
-    "damage_speed": 15,
+    "speed": 150,
+    "damage": 25,
+    "damage_speed": 7,
     "scripts": null
   }
 }

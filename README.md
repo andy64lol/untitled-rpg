@@ -59,7 +59,7 @@ Open the chests on map1, take the key they hide, and give it to the door to go d
 | `Left` / `Right` | cycle save slots from the main menu |
 | `Enter` / `Space` | confirm, use an item, or continue |
 | `Y` / `N` | confirm or cancel the new-game warning |
-| `H` | spawn a nearby enemy (debug) |
+| `H` | spawn an enemy at the nearest available `spawnEnemy` marker (debug) |
 | `F1` | open/close the in-game controls overlay |
 | `M` | minimize/expand the debug panel |
 | `E` | open the config editor from the expanded debug panel |
@@ -81,7 +81,9 @@ Both versions accept the shared flags below (`--help` is available in the Rust p
 | `--disable-fog-of-war` | show all enemies, even on dark tiles |
 | `--no-enemies` | disable enemy spawns, movement, and contact damage |
 | `--debug` | show modified config values in a panel in the top-right corner |
+| `--show-objects` | draw map object markers and labels (Rust only) |
 | `--script NAME` | run `scripts/NAME.urpgs` on startup (default: `init`) |
+| `--player-moves FILE` | replay `scripts/FILE.urpgs` as player input and start immediately; skips default `init` unless `--script` is also given (Rust only) |
 | `--output-file` | also write logs to `logs/runX.txt` |
 
 Example:
@@ -94,15 +96,15 @@ cargo run --manifest-path rust-port/Cargo.toml -- --lv2 --disable-rooms --output
 
 The Python version keeps its constants in `src/config.py`.
 
-The Rust version reads simple `key=value` overrides from `rust-port/.config` at startup. It holds window settings, player/combat values, inventory layout, lighting, effects, transition timings, death/win text, and font sizes. Missing or invalid values fall back to built-in defaults. Enemy trigger spawns wait `enemy_spawn_delay` seconds (default 1.0) after the player leaves the tile; stepping back onto the tile cancels the pending spawn.
+The Rust version reads simple `key=value` overrides from `rust-port/.config` at startup. It holds window settings, player/combat values, inventory layout, lighting, effects, transition timings, death/win text, and font sizes. Missing or invalid values fall back to built-in defaults. Enemy trigger spawns wait `enemy_spawn_delay` seconds (default 1.0) after the player leaves the tile; stepping back onto the tile cancels the pending spawn. Spawned enemies stay exactly on their `spawnEnemy` point for `enemy_spawn_idle` seconds (default 2.0) before AI starts; the spawn log reports the idle time. Enemy `damage_speed` is attacks per second, so each enemy gets its own `1 / damage_speed` cooldown between contact hits.
 
-The in-game Settings menu is a GUI alternative to the CLI flags. It can change the start map, startup script, infinite health, freecam, lights, room visibility, fog of war, enemies, the debug overlay, and log output without restarting. Changing a setting reveals the debug panel in the top-right corner.
+The in-game Settings menu is a GUI alternative to the CLI flags. It can change the start map, startup script, infinite health, freecam, lights, room visibility, fog of war, enemies, the debug overlay, log output, and object markers without restarting. Changing a setting reveals the debug panel in the top-right corner.
 
 The debug panel lists only values that differ from the startup config, as `key: value (Original originalValue)`. Press `M` to minimize it to a small `DEBUG` badge without hiding that debug mode is active. Press `E` while expanded to open the config editor: navigate with arrow keys/`W`/`S`, press `Enter` to edit a value, type the new value, and press `Enter` to apply it or `Esc` to cancel. Press `R` in the editor to reset the selected value to its original startup config, or `A` to reset every config value. Runtime config changes are saved in every save slot and restored when that slot is loaded.
 
 ## Scripts
 
-Script files use the `.urpgs` extension and live in `src/scripts/` for Python and `rust-port/src/scripts/` for Rust. See `src/scripts/README.txt` for the script syntax.
+Script files use the `.urpgs` extension and live in `src/scripts/` for Python and `rust-port/src/scripts/` for Rust. See `src/scripts/README.txt` for the script syntax. The Rust port also supports `movePlayer()`, `stopMove()`, `face()`, `tick(n)`, `log()`, `interact()`, and `attack()`; `--player-moves FILE` runs a replay script immediately. Enemy spawns are logged with their source, kind, and tile.
 
 ## License
 

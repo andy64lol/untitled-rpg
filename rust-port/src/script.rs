@@ -38,6 +38,12 @@ pub enum ScriptAction {
     Damage(i32),
     SetHealth(i32),
     Spawn { id: String, col: Option<i32>, row: Option<i32> },
+    MovePlayer(String),
+    StopMove,
+    Face(String),
+    Interact,
+    Attack,
+    Log(String),
     Flag(String),
     Unflag(String),
     End,
@@ -47,6 +53,7 @@ pub struct ScriptRunner {
     frames: Vec<(Vec<Node>, usize)>,
     nested: Vec<ScriptRunner>,
     wait: f32,
+    ticks: u32,
     waiting_dialogue: bool,
 }
 
@@ -56,7 +63,7 @@ impl ScriptRunner {
         let path = if requested.is_absolute() || requested.exists() {
             requested.to_path_buf()
         } else {
-            assets.src().join("scripts").join(format!("{name}.urpgs"))
+            assets.src().join("scripts").join(script_file_name(name))
         };
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
@@ -72,6 +79,7 @@ impl ScriptRunner {
             frames: vec![(nodes, 0)],
             nested: Vec::new(),
             wait: 0.0,
+            ticks: 0,
             waiting_dialogue: false,
         })
     }
@@ -98,6 +106,10 @@ impl ScriptRunner {
 
         if self.wait > 0.0 {
             self.wait = (self.wait - dt).max(0.0);
+            return ScriptAction::None;
+        }
+        if self.ticks > 0 {
+            self.ticks -= 1;
             return ScriptAction::None;
         }
         if self.waiting_dialogue {
@@ -173,6 +185,18 @@ impl ScriptRunner {
                                 row: args.get(2).and_then(|v| v.parse().ok()),
                             };
                         }
+                        "moveplayer" => {
+                            return ScriptAction::MovePlayer(arg(&args, 0).to_ascii_lowercase());
+                        }
+                        "stopmove" => return ScriptAction::StopMove,
+                        "face" => return ScriptAction::Face(arg(&args, 0).to_ascii_lowercase()),
+                        "interact" => return ScriptAction::Interact,
+                        "attack" => return ScriptAction::Attack,
+                        "tick" => {
+                            self.ticks = arg_i(&args, 0, 1).max(1) as u32;
+                            return ScriptAction::None;
+                        }
+                        "log" => return ScriptAction::Log(args.join(" ")),
                         "flag" => return ScriptAction::Flag(arg(&args, 0)),
                         "unflag" => return ScriptAction::Unflag(arg(&args, 0)),
                         _ => log_line(&format!("[script] unknown command: {name}")),
@@ -185,6 +209,14 @@ impl ScriptRunner {
 
     fn is_running(&self) -> bool {
         !self.frames.is_empty()
+    }
+}
+
+fn script_file_name(name: &str) -> String {
+    if name.to_ascii_lowercase().ends_with(".urpgs") {
+        name.to_string()
+    } else {
+        format!("{name}.urpgs")
     }
 }
 
@@ -486,6 +518,13 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
+    fn script_names_accept_optional_extension() {
+        assert_eq!(script_file_name("moves"), "moves.urpgs");
+        assert_eq!(script_file_name("moves.urpgs"), "moves.urpgs");
+        assert_eq!(script_file_name("MOVES.URPGS"), "MOVES.URPGS");
+    }
+
+    #[test]
     fn tokenizes_and_parses_example() {
         let text = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/scripts/example.urpgs"),
@@ -519,6 +558,7 @@ mod tests {
             }], 0)],
             nested: Vec::new(),
             wait: 0.0,
+            ticks: 0,
             waiting_dialogue: false,
         }
     }
@@ -545,5 +585,66 @@ mod tests {
         assert!(matches!(action, ScriptAction::End));
         let action = parent.update(0.016, &ctx, false, &|_| None);
         assert!(matches!(action, ScriptAction::Gold(1)));
+    }
+
+    #[test]
+    fn parses_replay_commands() {
+        let ctx = test_context();
+        let cases = [
+            ("moveplayer", vec!["right"], "move player right"),
+            ("stopmove", vec![], "stop move"),
+            ("face", vec!["up"], "face"),
+            ("interact", vec![], "interact"),
+            ("attack", vec![], "attack"),
+        ];
+        for (name, values, label) in cases {
+            let args: Vec<String> = values.into_iter().map(String::from).collect();
+            let mut script = runner(name, &args.iter().map(String::as_str).collect::<Vec<_>>());
+            let action = script.update(0.016, &ctx, false, &|_| None);
+            match (label, action) {
+                ("move player right", ScriptAction::MovePlayer(dir)) => assert_eq!(dir, "right"),
+                ("stop move", ScriptAction::StopMove) => {}
+                ("face", ScriptAction::Face(dir)) => assert_eq!(dir, "up"),
+                ("interact", ScriptAction::Interact) => {}
+                ("attack", ScriptAction::Attack) => {}
+                (label, action) => panic!("unexpected action {label}: {action:?}"),
+            }
+        }
+        let mut log = runner("log", &[]);
+        assert!(matches!(
+            log.update(0.016, &ctx, false, &|_| None),
+            ScriptAction::Log(message) if message.is_empty()
+        ));
+        let mut log = runner("log", &["spawn", "check"]);
+        assert!(matches!(
+            log.update(0.016, &ctx, false, &|_| None),
+            ScriptAction::Log(message) if message == "spawn check"
+        ));
+    }
+
+    #[test]
+    fn tick_delays_the_next_action_by_frames() {
+        let ctx = test_context();
+        let nodes = vec![
+            Node::Command { name: "tick".into(), args: vec!["2".into()] },
+            Node::Command { name: "gold".into(), args: vec!["5".into()] },
+        ];
+        let mut script = ScriptRunner {
+            frames: vec![(nodes, 0)],
+            nested: Vec::new(),
+            wait: 0.0,
+            ticks: 0,
+            waiting_dialogue: false,
+        };
+        for _ in 0..3 {
+            assert!(matches!(
+                script.update(0.016, &ctx, false, &|_| None),
+                ScriptAction::None
+            ));
+        }
+        assert!(matches!(
+            script.update(0.016, &ctx, false, &|_| None),
+            ScriptAction::Gold(5)
+        ));
     }
 }

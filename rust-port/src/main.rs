@@ -85,7 +85,10 @@ pub struct Cli {
     pub disable_fog_of_war: bool,
     pub no_enemies: bool,
     pub debug: bool,
+    pub show_objects: bool,
     pub script: Option<String>,
+    pub script_given: bool,
+    pub player_moves: Option<String>,
     pub output_file: bool,
 }
 
@@ -102,7 +105,10 @@ impl Default for Cli {
             disable_fog_of_war: false,
             no_enemies: false,
             debug: false,
+            show_objects: false,
             script: Some(DEFAULT_STARTUP_SCRIPT.into()),
+            script_given: false,
+            player_moves: None,
             output_file: false,
         }
     }
@@ -126,10 +132,12 @@ fn print_help() {
     println!("  --disable-fog-of-war      show enemies even on dark tiles");
     println!("  --no-enemies              disable enemy spawns and contact damage");
     println!("  --debug                   show modified config values in the top-right corner");
+    println!("  --show-objects            draw map object markers and labels");
     println!("  --script NAME             run scripts/NAME.urpgs on startup (default: init)");
+    println!("  --player-moves FILE       replay scripts/FILE.urpgs as player input");
     println!("  --output-file             also write logs to src/logs/runX.txt");
     println!();
-    println!("The same options can be changed in-game from the Settings menu.");
+    println!("Most options can be changed in-game from the Settings menu.");
 }
 
 fn parse_args() -> Result<Option<Cli>, String> {
@@ -163,6 +171,15 @@ fn parse_args_from(args: &[String]) -> Result<Option<Cli>, String> {
                 return Err("--script requires a script name".into());
             }
             cli.script = Some(value.to_string());
+            cli.script_given = true;
+            index += 1;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--player-moves=") {
+            if value.is_empty() {
+                return Err("--player-moves requires a script name".into());
+            }
+            cli.player_moves = Some(value.to_string());
             index += 1;
             continue;
         }
@@ -175,6 +192,7 @@ fn parse_args_from(args: &[String]) -> Result<Option<Cli>, String> {
             "--disable-fog-of-war" => cli.disable_fog_of_war = true,
             "--no-enemies" => cli.no_enemies = true,
             "--debug" => cli.debug = true,
+            "--show-objects" => cli.show_objects = true,
             "--output-file" => cli.output_file = true,
             "--script" => {
                 let value = args.get(index + 1).ok_or("--script requires a script name")?;
@@ -182,6 +200,15 @@ fn parse_args_from(args: &[String]) -> Result<Option<Cli>, String> {
                     return Err("--script requires a script name, not another flag".into());
                 }
                 cli.script = Some(value.clone());
+                cli.script_given = true;
+                index += 1;
+            }
+            "--player-moves" => {
+                let value = args.get(index + 1).ok_or("--player-moves requires a script name")?;
+                if value.starts_with('-') {
+                    return Err("--player-moves requires a script name, not another flag".into());
+                }
+                cli.player_moves = Some(value.clone());
                 index += 1;
             }
             _ => return Err(format!("unknown option: {arg}")),
@@ -268,6 +295,7 @@ mod tests {
     fn startup_script_defaults_to_init() {
         let cli = parse_args_from(&[]).unwrap().unwrap();
         assert_eq!(cli.script.as_deref(), Some("init"));
+        assert!(!cli.script_given);
     }
 
     #[test]
@@ -288,8 +316,11 @@ mod tests {
             "--disable-fog-of-war",
             "--no-enemies",
             "--debug",
+            "--show-objects",
             "--script",
             "example",
+            "--player-moves",
+            "moves",
             "--output-file",
         ]))
         .unwrap()
@@ -304,7 +335,10 @@ mod tests {
         assert!(cli.disable_fog_of_war);
         assert!(cli.no_enemies);
         assert!(cli.debug);
+        assert!(cli.show_objects);
         assert_eq!(cli.script.as_deref(), Some("example"));
+        assert!(cli.script_given);
+        assert_eq!(cli.player_moves.as_deref(), Some("moves"));
         assert!(cli.output_file);
     }
 
@@ -312,6 +346,9 @@ mod tests {
     fn parses_equals_script_form() {
         let cli = parse_args_from(&args(&["--script=example"])).unwrap().unwrap();
         assert_eq!(cli.script.as_deref(), Some("example"));
+        assert!(cli.script_given);
+        let cli = parse_args_from(&args(&["--player-moves=moves"])).unwrap().unwrap();
+        assert_eq!(cli.player_moves.as_deref(), Some("moves"));
     }
 
     #[test]
@@ -321,6 +358,9 @@ mod tests {
         assert!(parse_args_from(&args(&["--lv1", "--lv2"])).is_err());
         assert!(parse_args_from(&args(&["--script"])).is_err());
         assert!(parse_args_from(&args(&["--script", "--freecam"])).is_err());
+        assert!(parse_args_from(&args(&["--player-moves"])).is_err());
+        assert!(parse_args_from(&args(&["--player-moves", "--freecam"])).is_err());
+        assert!(parse_args_from(&args(&["--player-moves="])).is_err());
         assert!(parse_args_from(&args(&["--bogus"])).is_err());
     }
 }

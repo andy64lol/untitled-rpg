@@ -9,7 +9,15 @@ COMMANDS (C-style calls, strings in quotes)
   give("item_id", count);   Add items to the inventory
   take("item_id", count);   Remove items from the inventory
   gold(amount);             Add gold (negative removes it)
-  spawn("enemy_id", c, r);  Spawn enemy (next to player if no tile)
+  spawn("enemy_id", c, r);  Spawn enemy (nearest spawnEnemy marker if no tile)
+  movePlayer("right");      Hold a direction as synthetic WASD input (Rust replay)
+  stopMove();               Release synthetic movement (Rust replay)
+  face("up");               Turn without moving
+  tick(30);                 Wait 30 frames (one action per frame)
+  log();                    Log current player/enemy state
+  log("text");              Log a custom message
+  interact();               Perform the E interaction
+  attack();                 Perform the Z attack
   flag("name");             Set a persistent flag
   unflag("name");           Clear a flag
   wait(seconds);            Pause the script
@@ -54,5 +62,14 @@ TRIGGERS
   Place a map object named "script:<name>" to run scripts/<name>.urpgs
   when the player faces and interacts with it (E).
   Run one at startup with:  --script <name>
+
+PLAYER-MOVE REPLAY (RUST ONLY)
+  --player-moves <name> loads scripts/<name>.urpgs and starts the game immediately.
+  The extension is optional, so both "moves" and "moves.urpgs" work.
+  The script's movePlayer()/tick()/stopMove() calls drive the player like WASD.
+  The default init script is skipped unless --script is also passed.
+  See moves.urpgs for an example. Enemy spawns are logged with source and tile.
+  New enemies wait enemy_spawn_idle seconds (default 2.0) on the spawnEnemy point
+  before any AI or contact damage. damage_speed controls attacks per second.
 
 Item ids are from items.json. Enemy ids are from enemy.json ("id").
