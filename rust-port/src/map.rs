@@ -251,6 +251,12 @@ impl MapData {
         self.objects.iter().find(|o| o.name == name)
     }
 
+    pub fn object_index_at_tile(&self, prefix: &str, tile: Tile) -> Option<usize> {
+        self.objects_named_prefix(prefix)
+            .iter()
+            .position(|object| self.tile_of(vec2(object.x, object.y)) == tile)
+    }
+
     pub fn object_in_front(&self, pos: Vec2, facing: &str, prefix: &str) -> Option<usize> {
         let (dx, dy) = match facing {
             "up" => (0.0, -1.0),
@@ -362,6 +368,78 @@ pub fn log_line(message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_fountain_in_front() {
+        let map = MapData {
+            name: "test".into(),
+            width: 4,
+            height: 4,
+            tile_width: 32.0,
+            tile_height: 32.0,
+            tiles: vec![vec![0; 4]; 4],
+            flips: vec![vec![0; 4]; 4],
+            solid: HashSet::new(),
+            spikes: HashSet::new(),
+            objects: vec![MapObject {
+                x: 32.0,
+                y: 0.0,
+                name: "fountain".into(),
+                user_type: String::new(),
+            }],
+            rooms: HashMap::new(),
+            spawn: Vec2::ZERO,
+            light_sources: Vec::new(),
+            light_blockers: HashSet::new(),
+            lightable_tiles: HashSet::new(),
+            block_light_tiles: HashSet::new(),
+        };
+        assert_eq!(map.object_in_front(Vec2::ZERO, "right", "fountain"), Some(0));
+        assert_eq!(map.object_in_front(Vec2::ZERO, "left", "fountain"), None);
+    }
+
+    #[test]
+    fn finds_map4_problem_fountain() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("maps")
+            .join("map4.tmx");
+        let map = MapData::load(&path);
+        let index = map
+            .objects_named_prefix("fountain")
+            .iter()
+            .position(|object| (object.x - 560.0).abs() < 0.1 && (object.y - 592.0).abs() < 0.1)
+            .expect("fountain at 561.5,592.5");
+        assert!(!map.is_solid(Tile(17, 18)));
+        assert!(!map.is_solid(Tile(16, 18)));
+        assert!(!map.is_solid(Tile(18, 18)));
+        assert!(!map.is_solid(Tile(17, 17)));
+        assert!(!map.is_solid(Tile(17, 19)));
+        assert_eq!(map.object_index_at_tile("fountain", Tile(17, 18)), Some(index));
+        assert_eq!(map.object_in_front(vec2(528.0, 592.0), "right", "fountain"), Some(index));
+        assert_eq!(map.object_in_front(vec2(592.0, 592.0), "left", "fountain"), Some(index));
+        assert_eq!(map.object_in_front(vec2(560.0, 560.0), "down", "fountain"), Some(index));
+        assert_eq!(map.object_in_front(vec2(560.0, 624.0), "up", "fountain"), Some(index));
+    }
+
+    #[test]
+    fn finds_map3_chest_from_slot1_save() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("maps")
+            .join("map3.tmx");
+        let map = MapData::load(&path);
+        let index = map
+            .objects_named_prefix("chest")
+            .iter()
+            .position(|object| (object.x - 496.0).abs() < 0.1 && (object.y - 432.0).abs() < 0.1)
+            .expect("chest4 from slot1");
+        assert_eq!(index, 3);
+        assert_eq!(map.object_index_at_tile("chest", Tile(15, 13)), Some(index));
+        assert!(!map.is_solid(Tile(15, 13)));
+        assert_eq!(map.tile_of(vec2(464.0, 432.0)), Tile(14, 13));
+        assert_eq!(map.object_in_front(vec2(464.0, 432.0), "right", "chest"), Some(index));
+    }
 
     #[test]
     fn loads_all_maps() {

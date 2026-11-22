@@ -53,7 +53,12 @@ pub struct ScriptRunner {
 
 impl ScriptRunner {
     pub fn load(assets: &Assets, name: &str) -> Option<Self> {
-        let path = assets.src().join("scripts").join(format!("{name}.urpgs"));
+        let requested = std::path::Path::new(name);
+        let path = if requested.is_absolute() || requested.exists() {
+            requested.to_path_buf()
+        } else {
+            assets.src().join("scripts").join(format!("{name}.urpgs"))
+        };
         let text = std::fs::read_to_string(path).ok()?;
         let tokens = tokenize(&text);
         let mut parser = Parser { tokens, index: 0 };

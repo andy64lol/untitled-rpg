@@ -54,19 +54,21 @@ Open the chests on map1, take the key they hide, and give it to the door to go d
 | `I` | open/close your inventory |
 | `Tab` | switch inventory/equipment focus |
 | Arrow keys | navigate menus/inventory, or pan the camera with `--freecam` |
+| `S` | open Settings from the main menu |
 | `1` - `6` | choose a save slot from the main menu or slot screen |
 | `Left` / `Right` | cycle save slots from the main menu |
 | `Enter` / `Space` | confirm, use an item, or continue |
 | `Y` / `N` | confirm or cancel the new-game warning |
-| `H` | take damage (debug), don't use in game |
+| `H` | spawn a nearby enemy (debug) |
 | `Esc` | pause, close a dialogue, return to the main screen |
 
 ## Command line flags
 
-Both versions accept:
+Both versions accept the shared flags below (`--help` is available in the Rust port):
 
 | Flag | what it does |
 | --- | --- |
+| `-h` / `--help` | show help and exit |
 | `--lv1` ... `--lv5` | start directly on that map |
 | `--health-infinite` | ignore all damage |
 | `--freecam` | detach the camera from the player; pan with arrow keys |
@@ -74,6 +76,8 @@ Both versions accept:
 | `--disable-map-light` | disable light sources placed in the map |
 | `--disable-rooms` | use light-based visibility instead of room visibility |
 | `--disable-fog-of-war` | show all enemies, even on dark tiles |
+| `--no-enemies` | disable enemy spawns, movement, and contact damage |
+| `--debug` | show active options in a panel in the top-right corner |
 | `--script NAME` | run `scripts/NAME.urpgs` on startup |
 | `--output-file` | also write logs to `logs/runX.txt` |
 
@@ -87,7 +91,9 @@ cargo run --manifest-path rust-port/Cargo.toml -- --lv2 --disable-rooms --output
 
 The Python version keeps its constants in `src/config.py`.
 
-The Rust version reads simple `key=value` overrides from `rust-port/.config` at startup. It holds window settings, player/combat values, inventory layout, lighting, effects, transition timings, death/win text, and font sizes. Missing or invalid values fall back to built-in defaults.
+The Rust version reads simple `key=value` overrides from `rust-port/.config` at startup. It holds window settings, player/combat values, inventory layout, lighting, effects, transition timings, death/win text, and font sizes. Missing or invalid values fall back to built-in defaults. Enemy trigger spawns wait `enemy_spawn_delay` seconds (default 2.0) after the player leaves the tile; stepping back onto the tile cancels the pending spawn.
+
+The in-game Settings menu is a GUI alternative to the CLI flags. It can change the start map, startup script, infinite health, freecam, lights, room visibility, fog of war, enemies, the debug overlay, and log output without restarting. Changing a setting also reveals the debug panel in the top-right corner with the new values.
 
 ## Scripts
 

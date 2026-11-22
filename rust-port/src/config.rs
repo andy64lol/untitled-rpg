@@ -33,6 +33,7 @@ pub const DAMAGE_FLASH_DURATION: f32 = 0.25;
 pub const DAMAGE_NUMBER_LIFETIME: f32 = 0.9;
 pub const DAMAGE_NUMBER_RISE: f32 = 55.0;
 pub const ENEMY_DEATH_DURATION: f32 = 0.45;
+pub const ENEMY_SPAWN_DELAY: f32 = 2.0;
 pub const DEATH_ANIMATION_DURATION: f32 = 0.6;
 pub const DEATH_SCREEN_DELAY: f32 = 5.0;
 pub const DEATH_TITLE: &str = "YOU DIED";
@@ -183,6 +184,7 @@ pub struct RuntimeConfig {
     pub spike_damage: i32,
     pub spike_cooldown: f32,
     pub enemy_damage_cooldown: f32,
+    pub enemy_spawn_delay: f32,
     pub death_title: String,
     pub death_message: String,
     pub death_hint: String,
@@ -263,6 +265,7 @@ impl Default for RuntimeConfig {
             spike_damage: SPIKE_DAMAGE,
             spike_cooldown: SPIKE_COOLDOWN,
             enemy_damage_cooldown: ENEMY_DAMAGE_COOLDOWN,
+            enemy_spawn_delay: ENEMY_SPAWN_DELAY,
             death_title: DEATH_TITLE.into(),
             death_message: DEATH_MESSAGE.into(),
             death_hint: DEATH_HINT.into(),
@@ -435,6 +438,9 @@ impl RuntimeConfig {
             "enemy_damage_cooldown" => {
                 self.enemy_damage_cooldown = value.parse().unwrap_or(self.enemy_damage_cooldown)
             }
+            "enemy_spawn_delay" => {
+                self.enemy_spawn_delay = value.parse().unwrap_or(self.enemy_spawn_delay)
+            }
             "death_title" => self.death_title = value.into(),
             "death_message" => self.death_message = value.into(),
             "death_hint" => self.death_hint = value.into(),
@@ -454,12 +460,14 @@ mod tests {
     fn runtime_config_parses_overrides() {
         let mut config = RuntimeConfig::default();
         config.set("spike_cooldown", "0.9");
+        config.set("enemy_spawn_delay", "3.5");
         config.set("death_title", "GAME OVER");
         config.set("light_ray_count", "128");
         config.set("player_ray_count", "7");
         config.set("room_fade_tiles", "6");
         config.set("unknown", "ignored");
         assert_eq!(config.spike_cooldown, 0.9);
+        assert_eq!(config.enemy_spawn_delay, 3.5);
         assert_eq!(config.death_title, "GAME OVER");
         assert_eq!(config.spike_damage, SPIKE_DAMAGE);
         assert_eq!(config.light_ray_count, 128);

@@ -9,7 +9,8 @@ use crate::config;
 use crate::config::*;
 use crate::enemies::EnemyManager;
 use crate::items::{draw_quality, Equipment, Inventory, Item, Stack};
-use crate::map::{log_line, MapData, Tile};
+use crate::map::{MapData, Tile};
+pub use crate::map::log_line;
 use crate::player::Player;
 use crate::save::{self, SaveState};
 use crate::script::{ScriptAction, ScriptContext, ScriptRunner};
@@ -22,7 +23,21 @@ enum Screen {
     Dead,
     SlotLoad,
     SlotSave,
+    Settings,
 }
+
+const SETTING_START_MAP: usize = 0;
+const SETTING_START_SCRIPT: usize = 1;
+const SETTING_HEALTH: usize = 2;
+const SETTING_FREECAM: usize = 3;
+const SETTING_PLAYER_LIGHT: usize = 4;
+const SETTING_MAP_LIGHT: usize = 5;
+const SETTING_ROOMS: usize = 6;
+const SETTING_FOG: usize = 7;
+const SETTING_NO_ENEMIES: usize = 8;
+const SETTING_DEBUG: usize = 9;
+const SETTING_OUTPUT: usize = 10;
+const SETTING_BACK: usize = 11;
 
 #[derive(Clone, Debug)]
 struct Dialogue {
@@ -152,6 +167,10 @@ pub struct Game {
     death_timer: Option<f32>,
     transition: Option<(f32, bool, usize)>,
     slot: usize,
+    settings_index: usize,
+    settings_message: String,
+    debug_last_change: String,
+    available_scripts: Vec<String>,
     inventory_open: bool,
     inv_focus: InvFocus,
     inv_index: usize,
@@ -163,6 +182,7 @@ pub struct Game {
     spike_timer: f32,
     enemy_damage_timer: f32,
     fountain_timer: f32,
+    door_unlocked: bool,
     slot_menu_message: String,
 }
 
@@ -170,13 +190,27 @@ impl Game {
     pub fn new(assets: Assets, cli: Cli) -> Self {
         let items = crate::items::load_items(&assets.src().join("data/items.json"));
         let map = MapData::load(&assets.src().join("maps").join(config::MAP_FILES[cli.level]));
-        let enemies = EnemyManager::load(&map, &assets);
+        let mut enemies = EnemyManager::load(&map, &assets);
+        enemies.set_disabled(cli.no_enemies);
         let player = Player::new(map.spawn, cli.health_infinite);
         let chest_count = map.objects_named_prefix("chest").len();
         let fake_count = map.objects_named_prefix("fakeChest").len();
         let switch_count = map.objects_named_prefix("switch").len();
         let plate_count = map.objects_named_prefix("pressurePlate").len();
         let room_light = vec![0.0; (map.width * map.height) as usize];
+        let mut available_scripts = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(assets.src().join("scripts")) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|value| value.to_str()) != Some("urpgs") {
+                    continue;
+                }
+                if let Some(name) = path.file_stem().and_then(|value| value.to_str()) {
+                    available_scripts.push(name.to_string());
+                }
+            }
+        }
+        available_scripts.sort();
         let mut game = Self {
             screen: Screen::Menu,
             map_index: cli.level,
@@ -209,6 +243,10 @@ impl Game {
             death_timer: None,
             transition: None,
             slot: 1,
+            settings_index: 0,
+            settings_message: String::new(),
+            debug_last_change: String::new(),
+            available_scripts,
             inventory_open: false,
             inv_focus: InvFocus::Inventory,
             inv_index: 0,
@@ -223,6 +261,7 @@ impl Game {
             spike_timer: 0.0,
             enemy_damage_timer: 0.0,
             fountain_timer: 0.0,
+            door_unlocked: false,
             slot_menu_message: String::new(),
             assets,
             cli,
@@ -266,18 +305,17 @@ impl Game {
         self.inventory.add("stainless_steel_shield", 1, false);
         self.equipment = Equipment::new();
         self.scripts.clear();
-        self.script_flags.clear();
         self.chests_opened.iter_mut().for_each(|v| *v = false);
         self.fake_opened.iter_mut().for_each(|v| *v = false);
         self.switches.iter_mut().for_each(|v| *v = false);
         self.plates.iter_mut().for_each(|v| *v = false);
         self.enemies.enemies.clear();
-        self.enemies.armed.iter_mut().for_each(|v| *v = false);
-        self.enemies.spawned.iter_mut().for_each(|v| *v = false);
+        self.enemies.reset_triggers();
         self.death_timer = None;
         self.damage_numbers.clear();
         self.attack_effects.clear();
         self.enemy_damage_timer = 0.0;
+        self.door_unlocked = false;
         self.dialogue.close();
         self.options.close();
         self.unsaved = true;
@@ -290,17 +328,18 @@ impl Game {
         self.freecam = Vec2::ZERO;
         self.heart_shake_time = 0.0;
         self.camera = self.player.pos;
+        self.run_script("init");
         if let Some(name) = self.cli.script.clone() {
             self.run_script(&name);
-        } else if let Some(runner) = ScriptRunner::load(&self.assets, "init") {
-            self.scripts.push(runner);
         }
     }
 
     fn load_map(&mut self, index: usize) {
         self.map_index = index.min(config::MAP_FILES.len() - 1);
         self.map = MapData::load(&self.assets.src().join("maps").join(config::MAP_FILES[self.map_index]));
+        log_line(&format!("[map] loaded {}", self.map.name));
         self.enemies = EnemyManager::load(&self.map, &self.assets);
+        self.enemies.set_disabled(self.cli.no_enemies);
         self.chests_opened = vec![false; self.map.objects_named_prefix("chest").len()];
         self.fake_opened = vec![false; self.map.objects_named_prefix("fakeChest").len()];
         self.switches = vec![false; self.map.objects_named_prefix("switch").len()];
@@ -310,6 +349,8 @@ impl Game {
         self.visible_tiles.clear();
         self.visible_rooms.clear();
         self.enemy_damage_timer = 0.0;
+        self.fountain_timer = 0.0;
+        self.door_unlocked = false;
         self.player.reset(self.map.spawn);
         self.camera = self.player.pos;
         self.freecam = Vec2::ZERO;
@@ -341,13 +382,13 @@ impl Game {
         }
     }
 
-    fn process_script_actions(&mut self) {
+    fn process_script_actions(&mut self, dt: f32) {
         let ctx = self.script_context();
         let dialogue_open = self.dialogue.open;
         let mut actions = Vec::new();
         let mut index = 0;
         while index < self.scripts.len() {
-            let action = self.scripts[index].update(get_frame_time(), &ctx, dialogue_open);
+            let action = self.scripts[index].update(dt, &ctx, dialogue_open);
             if matches!(action, ScriptAction::None) {
                 index += 1;
                 continue;
@@ -434,28 +475,7 @@ impl Game {
     }
 
     fn blocked_tiles(&self) -> HashSet<Tile> {
-        let mut blocked = HashSet::new();
-        for (index, obj) in self.map.objects_named_prefix("chest").iter().enumerate() {
-            if !self.chests_opened.get(index).copied().unwrap_or(false) {
-                blocked.insert(self.map.tile_of(vec2(obj.x, obj.y)));
-            }
-        }
-        for obj in self.map.objects_named_prefix("fakeChest") {
-            blocked.insert(self.map.tile_of(vec2(obj.x, obj.y)));
-        }
-        for obj in self.map.objects_named_prefix("fountain") {
-            blocked.insert(self.map.tile_of(vec2(obj.x, obj.y)));
-        }
-        for obj in self.map.objects_named_prefix("switch") {
-            blocked.insert(self.map.tile_of(vec2(obj.x, obj.y)));
-        }
-        for obj in self.map.objects_named_prefix("pressurePlate") {
-            blocked.insert(self.map.tile_of(vec2(obj.x, obj.y)));
-        }
-        if let Some(door) = self.map.object_named("door") {
-            blocked.insert(self.map.tile_of(vec2(door.x, door.y)));
-        }
-        blocked
+        blocked_tiles_for(&self.map, self.door_unlocked)
     }
 
     fn update(&mut self, dt: f32) {
@@ -492,22 +512,8 @@ impl Game {
             return;
         }
 
-        if let Some((timer, out, target)) = self.transition {
-            let timer = timer + dt;
-            if timer >= crate::config::get().transition_duration {
-                if !out {
-                    self.load_map(target);
-                    self.transition = None;
-                } else {
-                    self.transition = Some((0.0, false, target));
-                }
-            } else {
-                self.transition = Some((timer, out, target));
-            }
-        }
-
         match self.screen {
-            Screen::Menu | Screen::SlotLoad | Screen::SlotSave | Screen::Won | Screen::Dead => {
+            Screen::Menu | Screen::SlotLoad | Screen::SlotSave | Screen::Settings | Screen::Won | Screen::Dead => {
                 if self.screen == Screen::Dead {
                     if let Some(timer) = self.death_timer.as_mut() {
                         *timer += dt;
@@ -529,6 +535,22 @@ impl Game {
 
         self.update_fog(dt);
 
+        if let Some((timer, out, target)) = self.transition {
+            let timer = timer + dt;
+            if timer >= crate::config::get().transition_duration {
+                if !out {
+                    self.load_map(target);
+                    self.dialogue.show("The door opens. You go deeper into the dungeon.");
+                    self.transition = None;
+                } else {
+                    self.transition = Some((0.0, false, target));
+                }
+            } else {
+                self.transition = Some((timer, out, target));
+            }
+            return;
+        }
+
         let pressed: Vec<KeyCode> = get_keys_pressed().into_iter().collect();
         if self.dialogue.open || self.options.open {
             self.update_box(&pressed, dt);
@@ -547,7 +569,7 @@ impl Game {
         if self.inventory_open {
             return;
         }
-        self.process_script_actions();
+        self.process_script_actions(dt);
 
         if self.cli.freecam {
             let mut delta = Vec2::ZERO;
@@ -600,19 +622,19 @@ impl Game {
                 let from = self.map.tile_of(self.player.pos);
                 let next = Tile(from.0 + dx, from.1 + dy);
                 if !self.map.in_bounds(next) || self.map.is_solid(next) || blocked.contains(&next) {
-                    self.interact();
+                    self.bump_interact(next);
                     if self.dialogue.open || self.options.open {
                         self.bump_lock = true;
                     }
                 }
             }
         }
+        self.enemies.update(dt);
         let moved = self.player.update(dt, &self.map, &blocked, &down, &pressed);
         if !self.cli.freecam {
             self.camera = self.player.pos;
         }
-        self.enemies.update(dt);
-        self.enemies.update_triggers(self.player.pos, self.map.tile_of(self.player.pos), &self.map);
+        self.enemies.update_triggers(dt, self.map.tile_of(self.player.target), &self.map);
 
         for effect in self.attack_effects.iter_mut() {
             effect.timer -= dt;
@@ -891,7 +913,7 @@ impl Game {
                     "The switch is now off."
                 });
             }
-        } else if let Some(index) = pending.strip_prefix("plate:").and_then(|v| v.parse::<usize>().ok()) {
+        } else if let Some(index) = pending.strip_prefix("pressure_plate:").and_then(|v| v.parse::<usize>().ok()) {
             if choice == "yes" {
                 if let Some(value) = self.plates.get_mut(index) {
                     *value = true;
@@ -904,57 +926,112 @@ impl Game {
         if self.player.dead || self.player.moving {
             return;
         }
-        let pos = self.player.pos;
-        if let Some(index) = self.map.object_in_front(pos, &self.player.facing, "chest") {
+        if let Some(index) = self.map.object_in_front(self.player.pos, &self.player.facing, "chest") {
             self.open_chest(index);
             return;
         }
-        if let Some(index) = self.map.object_in_front(pos, &self.player.facing, "fakeChest") {
+        if let Some(index) = self.map.object_in_front(self.player.pos, &self.player.facing, "fakeChest") {
             self.open_fake_chest(index);
             return;
         }
-        if let Some(index) = self.map.object_in_front(pos, &self.player.facing, "switch") {
-            let message = if self.switches.get(index).copied().unwrap_or(false) {
-                "The switch is currently on, flip it?"
-            } else {
-                "The switch is currently off, flip it?"
-            };
-            self.show_options(message, &["yes", "no"], &format!("switch:{index}"));
+        self.interact_switch_in_front();
+        self.interact_plate_in_front();
+        self.interact_script_in_front();
+        self.interact_door_in_front();
+    }
+
+    fn bump_interact(&mut self, next: Tile) {
+        if self.player.dead || self.player.moving {
             return;
         }
-        if let Some(index) = self.map.object_in_front(pos, &self.player.facing, "pressurePlate") {
-            if self.plates.get(index).copied().unwrap_or(false) {
-                return;
-            }
-            self.show_options("Step on the pressure plate?", &["yes", "no"], &format!("plate:{index}"));
+        let pos = self.player.pos;
+        let fountain = self.map.object_index_at_tile("fountain", next);
+        if let Some(index) = fountain {
+            self.open_fountain(index);
             return;
         }
-        if let Some(obj) = self.map.objects_named_prefix("script:").first() {
-            if self.object_is_in_front(obj) {
-                let name = obj.name.trim_start_matches("script:").to_string();
-                self.run_script(&name);
-                return;
-            }
+        self.interact_switch_in_front();
+        self.interact_plate_in_front();
+        let chest = self
+            .map
+            .object_index_at_tile("chest", next)
+            .or_else(|| self.map.object_in_front(pos, &self.player.facing, "chest"));
+        if let Some(index) = chest {
+            self.open_chest(index);
+            return;
         }
-        if let Some(door) = self.map.object_named("door") {
-            if self.object_is_in_front(door) {
-                let message = if self.map_index + 1 >= config::MAP_FILES.len() {
-                    "The final door needs a key. Give the key?"
-                } else {
-                    "The door is locked. Give the key?"
-                };
-                self.show_options(message, &["give", "not give"], "door");
-                return;
-            }
+        let fake_chest = self
+            .map
+            .object_index_at_tile("fakeChest", next)
+            .or_else(|| self.map.object_in_front(pos, &self.player.facing, "fakeChest"));
+        if let Some(index) = fake_chest {
+            self.open_fake_chest(index);
+            return;
         }
-        if let Some(fountain) = self.map.object_named("fountain") {
-            if self.object_is_in_front(fountain) {
-                if self.fountain_timer > 0.0 {
-                    self.dialogue.show("Don't drink too much water!");
-                } else {
-                    self.show_options("A regenerating fountain, drink from here?", &["yes", "no"], "fountain");
-                }
-            }
+        self.interact_script_in_front();
+        self.interact_door_in_front();
+    }
+
+    fn interact_switch_in_front(&mut self) {
+        let Some(index) = self.map.object_in_front(self.player.pos, &self.player.facing, "switch") else {
+            return;
+        };
+        let message = if self.switches.get(index).copied().unwrap_or(false) {
+            "The switch is currently on, flip it?"
+        } else {
+            "The switch is currently off, flip it?"
+        };
+        self.show_options(message, &["yes", "no"], &format!("switch:{index}"));
+    }
+
+    fn interact_plate_in_front(&mut self) {
+        let Some(index) = self.map.object_in_front(self.player.pos, &self.player.facing, "pressurePlate") else {
+            return;
+        };
+        if self.plates.get(index).copied().unwrap_or(false) {
+            return;
+        }
+        self.show_options(
+            "Step on the pressure plate?",
+            &["yes", "no"],
+            &format!("pressure_plate:{index}"),
+        );
+    }
+
+    fn interact_script_in_front(&mut self) {
+        let name = self.map.objects_named_prefix("script:").into_iter()
+            .find(|obj| self.object_is_in_front(obj))
+            .map(|obj| obj.name.trim_start_matches("script:").to_string());
+        if let Some(name) = name {
+            self.run_script(&name);
+        }
+    }
+
+    fn interact_door_in_front(&mut self) {
+        let Some(door) = self.map.object_named("door") else {
+            return;
+        };
+        if !self.object_is_in_front(door) {
+            return;
+        }
+        let message = if self.map_index + 1 >= config::MAP_FILES.len() {
+            "The final door needs a key. Give the key?"
+        } else {
+            "The door is locked. Give the key?"
+        };
+        self.show_options(message, &["give", "not give"], "door");
+    }
+
+    fn open_fountain(&mut self, _index: usize) {
+        self.bump_lock = true;
+        if self.fountain_timer > 0.0 {
+            self.dialogue.show("Don't drink too much water!");
+        } else {
+            self.show_options(
+                "A regenerating fountain, drink from here?",
+                &["yes", "no"],
+                "fountain",
+            );
         }
     }
 
@@ -1017,13 +1094,13 @@ impl Game {
             self.dialogue.show("You do not have a key.");
             return;
         }
+        self.door_unlocked = true;
         if self.map_index + 1 >= config::MAP_FILES.len() {
             self.screen = Screen::Won;
             self.unsaved = false;
             self.active_run = false;
             return;
         }
-        self.dialogue.show("The door opens. You go deeper into the dungeon.");
         self.transition = Some((0.0, true, self.map_index + 1));
     }
 
@@ -1164,17 +1241,14 @@ impl Game {
                 pressure_plates: self.plates.clone(),
             },
             script_flags: self.script_flags.iter().cloned().collect(),
-            door_unlocked: self.screen == Screen::Won,
+            door_unlocked: self.door_unlocked || self.screen == Screen::Won,
         }
     }
 
     fn apply_save_state(&mut self, state: SaveState) {
         let map_name = state.map;
-        if let Some(index) = config::MAP_FILES.iter().position(|m| *m == map_name) {
-            if index != self.map_index {
-                self.load_map(index);
-            }
-        }
+        let map_index = config::MAP_FILES.iter().position(|m| *m == map_name).unwrap_or(0);
+        self.load_map(map_index);
         self.player.pos = vec2(state.player.x, state.player.y);
         self.player.target = self.player.pos;
         self.player.hp = state.player.hp;
@@ -1207,6 +1281,7 @@ impl Game {
                 *value = true;
             }
         }
+        self.enemies.set_disabled(self.cli.no_enemies);
         self.script_flags = state.script_flags.into_iter().collect();
         self.scripts.clear();
         self.death_timer = None;
@@ -1216,6 +1291,7 @@ impl Game {
         self.freecam = Vec2::ZERO;
         self.heart_shake_time = 0.0;
         self.camera = self.player.pos;
+        self.door_unlocked = state.door_unlocked;
         self.screen = if state.door_unlocked { Screen::Won } else { Screen::Game };
     }
 
@@ -1225,6 +1301,7 @@ impl Game {
             Screen::Menu => self.draw_menu(),
             Screen::SlotLoad => self.draw_slot_menu("LOAD GAME"),
             Screen::SlotSave => self.draw_slot_menu("SAVE GAME"),
+            Screen::Settings => self.draw_settings(),
             Screen::Won => self.draw_end_screen("YOU ESCAPED!", "The key turned, and the dungeon door opened.", "Press ENTER or ESC to return to the menu."),
             Screen::Dead => self.draw_end_screen(&crate::config::get().death_title, &crate::config::get().death_message, &crate::config::get().death_hint),
             Screen::Game => self.draw_game(),
@@ -1234,6 +1311,83 @@ impl Game {
         }
         if self.new_game_prompt {
             self.draw_new_game_prompt();
+        }
+        if self.cli.debug {
+            self.draw_debug();
+        }
+    }
+
+    fn draw_debug(&self) {
+        let mut options: Vec<String> = Vec::new();
+        if self.cli.level_given {
+            options.push(format!("lv{}", self.cli.level + 1));
+        }
+        if self.cli.health_infinite {
+            options.push("health-infinite".into());
+        }
+        if self.cli.freecam {
+            options.push("freecam".into());
+        }
+        if self.cli.no_enemies {
+            options.push("no-enemies".into());
+        }
+        if self.cli.disable_player_light {
+            options.push("player-light off".into());
+        }
+        if self.cli.disable_map_light {
+            options.push("map-light off".into());
+        }
+        if self.cli.disable_rooms {
+            options.push("rooms off".into());
+        }
+        if self.cli.disable_fog_of_war {
+            options.push("fog off".into());
+        }
+        if self.cli.output_file {
+            options.push("output-file".into());
+        }
+        if let Some(script) = &self.cli.script {
+            options.push(format!("script={script}"));
+        }
+
+        let mut lines: Vec<String> = vec![
+            "DEBUG".into(),
+            format!("map  {}", self.map.name),
+            format!("pos  {:.0},{:.0}", self.player.pos.x, self.player.pos.y),
+        ];
+        if options.is_empty() {
+            lines.push("options  none".into());
+        } else {
+            lines.push("options".into());
+            lines.extend(options.into_iter().map(|option| format!("  {option}")));
+        }
+        if !self.debug_last_change.is_empty() {
+            lines.push(format!("changed  {}", self.debug_last_change));
+        }
+
+        let size = 12;
+        let pad = 8.0;
+        let line_h = 17.0;
+        let width = lines
+            .iter()
+            .map(|line| measure_text(line, Some(&self.assets.font), size, 1.0).width)
+            .fold(0.0, f32::max) + pad * 2.0;
+        let height = lines.len() as f32 * line_h + pad * 2.0;
+        let right = screen_width() - 12.0;
+        let top = 12.0;
+        draw_rectangle(right - width, top, width, height, Color::new(0.02, 0.02, 0.04, 0.78));
+        draw_rectangle_lines(right - width, top, width, height, 1.0, INV_BORDER_COLOR);
+        for (index, line) in lines.iter().enumerate() {
+            draw_text_at(
+                line,
+                right - pad,
+                top + pad + line_h * (index as f32 + 0.5),
+                size,
+                TEXT_COLOR,
+                &self.assets.font,
+                1.0,
+                0.5,
+            );
         }
     }
 
@@ -2046,6 +2200,192 @@ impl Game {
         }
     }
 
+    fn settings_rows(&self) -> Vec<(String, String)> {
+        let on_off = |enabled: bool| if enabled { "on" } else { "off" }.to_string();
+        vec![
+            ("Start map".into(), format!("map{}", self.cli.level + 1)),
+            ("Startup script".into(), self.cli.script.clone().unwrap_or_else(|| "none".into())),
+            ("Infinite health".into(), on_off(self.cli.health_infinite)),
+            ("Freecam".into(), on_off(self.cli.freecam)),
+            ("Player light".into(), on_off(!self.cli.disable_player_light)),
+            ("Map lights".into(), on_off(!self.cli.disable_map_light)),
+            ("Room visibility".into(), on_off(!self.cli.disable_rooms)),
+            ("Fog of war".into(), on_off(!self.cli.disable_fog_of_war)),
+            ("Enemies".into(), on_off(!self.cli.no_enemies)),
+            ("Debug overlay".into(), on_off(self.cli.debug)),
+            ("Output log file".into(), on_off(self.cli.output_file)),
+            ("Back".into(), String::new()),
+        ]
+    }
+
+    fn startup_script_index(&self) -> usize {
+        match &self.cli.script {
+            None => 0,
+            Some(name) => self
+                .available_scripts
+                .iter()
+                .position(|script| script == name)
+                .map(|index| index + 1)
+                .unwrap_or(0),
+        }
+    }
+
+    fn change_setting(&mut self, index: usize, delta: i32) {
+        if index == SETTING_BACK || index >= self.settings_rows().len() {
+            return;
+        }
+        let label = self.settings_rows()[index].0.clone();
+        match index {
+            SETTING_START_MAP => {
+                let count = config::MAP_FILES.len() as i32;
+                let next = (self.cli.level as i32 + delta).rem_euclid(count) as usize;
+                self.cli.level = next;
+                self.cli.level_given = true;
+                self.settings_message = "Applies to the next new game.".into();
+            }
+            SETTING_START_SCRIPT => {
+                let count = self.available_scripts.len() as i32 + 1;
+                let next = (self.startup_script_index() as i32 + delta).rem_euclid(count) as usize;
+                self.cli.script = if next == 0 {
+                    None
+                } else {
+                    Some(self.available_scripts[next - 1].clone())
+                };
+                self.settings_message = "Applies to the next new game.".into();
+            }
+            SETTING_HEALTH => {
+                self.cli.health_infinite = !self.cli.health_infinite;
+                self.player.invincible = self.cli.health_infinite;
+            }
+            SETTING_FREECAM => {
+                self.cli.freecam = !self.cli.freecam;
+                self.freecam = Vec2::ZERO;
+                if !self.cli.freecam {
+                    self.camera = self.player.pos;
+                }
+            }
+            SETTING_PLAYER_LIGHT => self.cli.disable_player_light = !self.cli.disable_player_light,
+            SETTING_MAP_LIGHT => self.cli.disable_map_light = !self.cli.disable_map_light,
+            SETTING_ROOMS => {
+                self.cli.disable_rooms = !self.cli.disable_rooms;
+                self.room_light_ready = false;
+                self.visible_tiles.clear();
+                self.visible_rooms.clear();
+            }
+            SETTING_FOG => self.cli.disable_fog_of_war = !self.cli.disable_fog_of_war,
+            SETTING_NO_ENEMIES => {
+                self.cli.no_enemies = !self.cli.no_enemies;
+                self.enemies.set_disabled(self.cli.no_enemies);
+            }
+            SETTING_DEBUG => self.cli.debug = !self.cli.debug,
+            SETTING_OUTPUT => {
+                self.cli.output_file = !self.cli.output_file;
+                crate::set_log_output(self.cli.output_file);
+            }
+            _ => return,
+        }
+        self.debug_last_change = format!("{}: {}", label, self.settings_rows()[index].1);
+        if index != SETTING_DEBUG {
+            self.cli.debug = true;
+        }
+        log_line(&format!("[settings] {label}: {}", self.settings_rows()[index].1));
+    }
+
+    fn draw_settings(&mut self) {
+        let pressed: Vec<KeyCode> = get_keys_pressed().into_iter().collect();
+        let rows = self.settings_rows();
+        let count = rows.len();
+        self.settings_index = self.settings_index.min(count - 1);
+
+        if pressed.contains(&KeyCode::Escape) {
+            self.screen = Screen::Menu;
+            self.settings_message.clear();
+            return;
+        }
+        if pressed.contains(&KeyCode::Up) || pressed.contains(&KeyCode::W) {
+            self.settings_index = (self.settings_index + count - 1) % count;
+        }
+        if pressed.contains(&KeyCode::Down) || pressed.contains(&KeyCode::S) {
+            self.settings_index = (self.settings_index + 1) % count;
+        }
+        if pressed.contains(&KeyCode::Left) || pressed.contains(&KeyCode::A) {
+            self.change_setting(self.settings_index, -1);
+        }
+        if pressed.contains(&KeyCode::Right) || pressed.contains(&KeyCode::D) {
+            self.change_setting(self.settings_index, 1);
+        }
+        if pressed.contains(&KeyCode::Enter) || pressed.contains(&KeyCode::Space) {
+            if self.settings_index == SETTING_BACK {
+                self.screen = Screen::Menu;
+                self.settings_message.clear();
+                return;
+            }
+            self.change_setting(self.settings_index, 1);
+        }
+
+        let (mx, my) = mouse_position();
+        if is_mouse_button_pressed(MouseButton::Left) {
+            let left = screen_width() / 2.0 - 320.0;
+            let top = 150.0;
+            let row_height = 42.0;
+            let row = ((my - top + row_height / 2.0) / row_height).floor() as isize;
+            if row >= 0
+                && (row as usize) < count
+                && mx >= left - 12.0
+                && mx <= left + 648.0
+            {
+                self.settings_index = row as usize;
+                if row as usize == SETTING_BACK {
+                    self.screen = Screen::Menu;
+                    self.settings_message.clear();
+                    return;
+                }
+                self.change_setting(row as usize, 1);
+            }
+        }
+        if self.screen != Screen::Settings {
+            return;
+        }
+
+        draw_rectangle(0.0, 0.0, screen_width(), screen_height(), Color::new(0.0, 0.0, 0.0, 0.82));
+        draw_text_at("SETTINGS", screen_width() / 2.0, 74.0, 30, TEXT_COLOR, &self.assets.font, 0.5, 0.5);
+        let left = screen_width() / 2.0 - 320.0;
+        let rows = self.settings_rows();
+        for (index, (label, value)) in rows.iter().enumerate() {
+            let y = 150.0 + index as f32 * 42.0;
+            if index == self.settings_index {
+                draw_rectangle(left - 12.0, y - 19.0, 648.0, 38.0, Color::new(0.16, 0.18, 0.26, 0.95));
+            }
+            draw_text_at(label, left, y, 15, TEXT_COLOR, &self.assets.font, 0.0, 0.5);
+            if !value.is_empty() {
+                let color = if index == self.settings_index { INV_ACCENT_COLOR } else { MENU_MUTED_TEXT };
+                draw_text_at(value, left + 620.0, y, 15, color, &self.assets.font, 1.0, 0.5);
+            }
+        }
+        draw_text_at(
+            "Up/Down select   Left/Right or Enter change   Esc back",
+            screen_width() / 2.0,
+            screen_height() - 74.0,
+            11,
+            MENU_MUTED_TEXT,
+            &self.assets.font,
+            0.5,
+            0.5,
+        );
+        if !self.settings_message.is_empty() {
+            draw_text_at(
+                &self.settings_message,
+                screen_width() / 2.0,
+                screen_height() - 48.0,
+                11,
+                INV_ACCENT_COLOR,
+                &self.assets.font,
+                0.5,
+                0.5,
+            );
+        }
+    }
+
     fn draw_menu(&mut self) {
         let title_w = self.assets.title.width() * crate::config::get().title_scale;
         let title_h = self.assets.title.height() * crate::config::get().title_scale;
@@ -2072,6 +2412,11 @@ impl Game {
         }
         let settings_hovered = mx >= 20.0 && mx <= 84.0
             && my >= screen_height() - 84.0 && my <= screen_height() - 20.0;
+        if settings_hovered && is_mouse_button_pressed(MouseButton::Left) {
+            self.screen = Screen::Settings;
+            self.settings_index = 0;
+            self.settings_message.clear();
+        }
         let settings_name = if settings_hovered { "settings_hover" } else { "settings" };
         if let Some(texture) = self.assets.buttons.get(settings_name).or_else(|| self.assets.buttons.get("settings")) {
             draw_texture_ex(texture, 20.0, screen_height() - 84.0, WHITE,
@@ -2085,7 +2430,7 @@ impl Game {
         };
         draw_text_at(start_hint, hint_x, screen_height() - 110.0,
             10, MENU_MUTED_TEXT, &self.assets.font, 0.5, 0.5);
-        draw_text_at("WASD MOVE   E INTERACT   Z ATTACK   H DAMAGE TEST", hint_x, screen_height() - 74.0,
+        draw_text_at("WASD MOVE   E INTERACT   Z ATTACK   H SPAWN ENEMY", hint_x, screen_height() - 74.0,
             10, MENU_MUTED_TEXT, &self.assets.font, 0.5, 0.5);
         draw_text_at("I INVENTORY   TAB EQUIPMENT   ESC MENU   Z SKIP TEXT", hint_x, screen_height() - 56.0,
             10, MENU_MUTED_TEXT, &self.assets.font, 0.5, 0.5);
@@ -2104,6 +2449,11 @@ impl Game {
         }
         if pressed.contains(&KeyCode::Right) {
             self.slot = self.slot % crate::config::get().save_slots + 1;
+        }
+        if pressed.contains(&KeyCode::S) {
+            self.screen = Screen::Settings;
+            self.settings_index = 0;
+            self.settings_message.clear();
         }
         for key in &pressed {
             if let KeyCode::Key1 = key { self.slot = 1; }
@@ -2218,5 +2568,37 @@ impl Game {
             crate::config::get().death_message_font_size, TEXT_COLOR, &self.assets.font, 0.5, 0.5);
         draw_text_at(hint, screen_width() / 2.0, screen_height() / 2.0 + 32.0,
             crate::config::get().death_hint_font_size, MENU_MUTED_TEXT, &self.assets.font, 0.5, 0.5);
+    }
+}
+
+fn blocked_tiles_for(map: &MapData, door_unlocked: bool) -> HashSet<Tile> {
+    let mut blocked = HashSet::new();
+    for prefix in ["chest", "fakeChest", "fountain", "switch", "pressurePlate"] {
+        for obj in map.objects_named_prefix(prefix) {
+            blocked.insert(map.tile_of(vec2(obj.x, obj.y)));
+        }
+    }
+    if !door_unlocked {
+        if let Some(door) = map.object_named("door") {
+            blocked.insert(map.tile_of(vec2(door.x, door.y)));
+        }
+    }
+    blocked
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chest_collision_survives_save_state_restore() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("maps")
+            .join("map3.tmx");
+        let map = MapData::load(&path);
+        let blocked = blocked_tiles_for(&map, false);
+        assert!(blocked.contains(&Tile(15, 13)));
+        assert!(blocked.contains(&Tile(16, 9)));
     }
 }

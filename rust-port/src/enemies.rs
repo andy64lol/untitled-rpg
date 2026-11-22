@@ -233,6 +233,8 @@ pub struct EnemyManager {
     pub spawn_points: Vec<(f32, f32, String)>,
     pub armed: Vec<bool>,
     pub spawned: Vec<bool>,
+    pending: Vec<Option<f32>>,
+    disabled: bool,
 }
 
 impl EnemyManager {
@@ -254,10 +256,33 @@ impl EnemyManager {
             spawn_points,
             armed: vec![false; len],
             spawned: vec![false; len],
+            pending: vec![None; len],
+            disabled: false,
         }
     }
 
+    pub fn set_disabled(&mut self, disabled: bool) {
+        self.disabled = disabled;
+        if disabled {
+            self.enemies.clear();
+            self.clear_pending();
+        }
+    }
+
+    pub fn reset_triggers(&mut self) {
+        self.armed.iter_mut().for_each(|value| *value = false);
+        self.spawned.iter_mut().for_each(|value| *value = false);
+        self.clear_pending();
+    }
+
+    fn clear_pending(&mut self) {
+        self.pending.iter_mut().for_each(|value| *value = None);
+    }
+
     pub fn spawn(&mut self, id: &str, pos: Vec2) {
+        if self.disabled {
+            return;
+        }
         let resolved = if self.mobs.contains_key(id) { id } else { "bat" };
         if self.mobs.contains_key(resolved) {
             self.enemies.push(Enemy::new(resolved, pos));
@@ -265,6 +290,9 @@ impl EnemyManager {
     }
 
     pub fn spawn_near_player(&mut self, player_pos: Vec2, map: &MapData) {
+        if self.disabled {
+            return;
+        }
         let offsets = [
             (-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0),
             (-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0),
@@ -283,6 +311,9 @@ impl EnemyManager {
     }
 
     pub fn attack_at(&mut self, pos: Vec2) -> bool {
+        if self.disabled {
+            return false;
+        }
         for enemy in self.enemies.iter_mut() {
             if enemy.dying {
                 continue;
@@ -298,6 +329,9 @@ impl EnemyManager {
     }
 
     pub fn contact_attack(&self, player_pos: Vec2) -> Option<(i32, f32)> {
+        if self.disabled {
+            return None;
+        }
         let mut best: Option<(i32, f32)> = None;
         for enemy in &self.enemies {
             if enemy.dying
@@ -322,6 +356,9 @@ impl EnemyManager {
     }
 
     pub fn update(&mut self, dt: f32) {
+        if self.disabled {
+            return;
+        }
         let mut finished = Vec::new();
         for (index, enemy) in self.enemies.iter_mut().enumerate() {
             if enemy.dying {
@@ -371,6 +408,9 @@ impl EnemyManager {
     }
 
     pub fn step_toward_player(&mut self, player_pos: Vec2, map: &MapData) {
+        if self.disabled {
+            return;
+        }
         let player_tile = map.tile_of(player_pos);
         for enemy in self.enemies.iter_mut() {
             if enemy.dying || enemy.moving {
@@ -401,24 +441,37 @@ impl EnemyManager {
         }
     }
 
-    pub fn update_triggers(&mut self, player_pos: Vec2, player_tile: Tile, map: &MapData) {
+    pub fn update_triggers(&mut self, dt: f32, player_tile: Tile, map: &MapData) {
+        if self.disabled {
+            return;
+        }
+        let delay = crate::config::get().enemy_spawn_delay;
         for index in 0..self.spawn_points.len() {
             if self.spawned[index] {
                 continue;
             }
             let (x, y, id) = self.spawn_points[index].clone();
-            if map.tile_of(player_pos) == map.tile_of(vec2(x, y)) {
+            if player_tile == map.tile_of(vec2(x, y)) {
                 self.armed[index] = true;
+                self.pending[index] = None;
             } else if self.armed[index] {
                 self.armed[index] = false;
-                self.spawned[index] = true;
-                self.spawn(&id, vec2(x, y));
+                self.pending[index] = Some(delay);
+            } else if let Some(timer) = self.pending[index].as_mut() {
+                *timer -= dt;
+                if *timer <= 0.0 {
+                    self.pending[index] = None;
+                    self.spawned[index] = true;
+                    self.spawn(&id, vec2(x, y));
+                }
             }
         }
-        let _ = player_tile;
     }
 
     pub fn draw(&self, assets: &Assets, visible: Option<&std::collections::HashSet<Tile>>, map: &MapData) {
+        if self.disabled {
+            return;
+        }
         for enemy in &self.enemies {
             if let Some(visible) = visible {
                 if !visible.contains(&map.tile_of(enemy.pos)) {
@@ -543,11 +596,124 @@ mod tests {
             spawn_points: Vec::new(),
             armed: Vec::new(),
             spawned: Vec::new(),
+            pending: Vec::new(),
+            disabled: false,
         };
         manager.enemies.push(Enemy::new("bat", vec2(112.0, 112.0)));
         manager.step_toward_player(vec2(224.0, 112.0), &empty_map());
         assert!(manager.enemies[0].moving);
         assert_eq!(manager.enemies[0].target, vec2(144.0, 112.0));
+    }
+
+    #[test]
+    fn trigger_arms_from_target_tile() {
+        let mut manager = EnemyManager {
+            enemies: Vec::new(),
+            mobs: HashMap::new(),
+            spawn_points: vec![(80.0, 80.0, "bat".into())],
+            armed: vec![false],
+            spawned: vec![false],
+            pending: vec![None],
+            disabled: false,
+        };
+        manager.update_triggers(0.016, Tile(2, 2), &empty_map());
+        assert!(manager.armed[0]);
+    }
+
+    #[test]
+    fn spawn_waits_until_delay_after_player_leaves() {
+        let animation = MobAnimation { frames: vec![0], looped: true };
+        let mob = MobType {
+            name: "Bat".into(),
+            texture_name: "bat.png".into(),
+            frame_size: vec2(32.0, 32.0),
+            columns: 1,
+            frame_duration: 0.1,
+            speed: 160.0,
+            damage: 10,
+            damage_speed: 10.0,
+            walking: animation.clone(),
+            defeat: animation,
+        };
+        let mut manager = EnemyManager {
+            enemies: Vec::new(),
+            mobs: HashMap::new(),
+            spawn_points: vec![(80.0, 80.0, "bat".into())],
+            armed: vec![false],
+            spawned: vec![false],
+            pending: vec![None],
+            disabled: false,
+        };
+        manager.mobs.insert("bat".into(), mob);
+
+        manager.update_triggers(0.016, Tile(2, 2), &empty_map());
+        assert!(manager.armed[0]);
+        manager.update_triggers(0.016, Tile(3, 2), &empty_map());
+        assert!(manager.enemies.is_empty());
+        manager.update_triggers(1.0, Tile(3, 2), &empty_map());
+        assert!(manager.enemies.is_empty());
+        manager.update_triggers(1.1, Tile(3, 2), &empty_map());
+        assert_eq!(manager.enemies.len(), 1);
+        assert!(manager.spawned[0]);
+    }
+
+    #[test]
+    fn returning_to_trigger_cancels_pending_spawn() {
+        let animation = MobAnimation { frames: vec![0], looped: true };
+        let mob = MobType {
+            name: "Bat".into(),
+            texture_name: "bat.png".into(),
+            frame_size: vec2(32.0, 32.0),
+            columns: 1,
+            frame_duration: 0.1,
+            speed: 160.0,
+            damage: 10,
+            damage_speed: 10.0,
+            walking: animation.clone(),
+            defeat: animation,
+        };
+        let mut manager = EnemyManager {
+            enemies: Vec::new(),
+            mobs: HashMap::new(),
+            spawn_points: vec![(80.0, 80.0, "bat".into())],
+            armed: vec![false],
+            spawned: vec![false],
+            pending: vec![None],
+            disabled: false,
+        };
+        manager.mobs.insert("bat".into(), mob);
+
+        manager.update_triggers(0.016, Tile(2, 2), &empty_map());
+        manager.update_triggers(0.016, Tile(3, 2), &empty_map());
+        manager.update_triggers(0.016, Tile(2, 2), &empty_map());
+        manager.update_triggers(5.0, Tile(3, 2), &empty_map());
+        assert!(manager.enemies.is_empty());
+        manager.update_triggers(2.0, Tile(3, 2), &empty_map());
+        assert_eq!(manager.enemies.len(), 1);
+    }
+
+    #[test]
+    fn disabled_manager_blocks_spawns_and_damage() {
+        let mut manager = EnemyManager {
+            enemies: Vec::new(),
+            mobs: HashMap::new(),
+            spawn_points: vec![(80.0, 80.0, "bat".into())],
+            armed: vec![false],
+            spawned: vec![false],
+            pending: vec![None],
+            disabled: false,
+        };
+        manager.set_disabled(true);
+        manager.spawn("bat", vec2(80.0, 80.0));
+        manager.spawn_near_player(vec2(80.0, 80.0), &empty_map());
+        manager.update_triggers(0.016, Tile(2, 2), &empty_map());
+        assert!(manager.enemies.is_empty());
+        assert!(manager.spawned.iter().all(|value| !*value));
+        assert_eq!(manager.contact_attack(vec2(80.0, 80.0)), None);
+        assert!(!manager.attack_at(vec2(80.0, 80.0)));
+        manager.update(0.5);
+        manager.step_toward_player(vec2(0.0, 0.0), &empty_map());
+        assert!(manager.enemies.is_empty());
     }
 
     #[test]
@@ -580,6 +746,8 @@ mod tests {
             spawn_points: Vec::new(),
             armed: Vec::new(),
             spawned: Vec::new(),
+            pending: Vec::new(),
+            disabled: false,
         };
         manager.mobs.insert("bat".into(), mob);
         manager.enemies.push(Enemy::new("bat", vec2(48.0, 48.0)));
