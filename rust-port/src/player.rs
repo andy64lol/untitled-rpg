@@ -317,6 +317,18 @@ mod tests {
     }
 
     #[test]
+    fn taking_damage_shows_red_flash() {
+        let mut player = Player::new(vec2(48.0, 48.0), false);
+        assert_eq!(player.take_damage(10, 1), 9);
+        assert!(player.damage_flash_timer > 0.0);
+
+        player.update_animation(0.01);
+        assert_eq!(player.color.r, 1.0);
+        assert_eq!(player.color.g, 110.0 / 255.0);
+        assert_eq!(player.color.b, 110.0 / 255.0);
+    }
+
+    #[test]
     fn cannot_start_move_onto_blocked_tile() {
         let map = MapData {
             name: "test".into(),

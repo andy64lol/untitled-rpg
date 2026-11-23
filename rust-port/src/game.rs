@@ -132,12 +132,6 @@ struct DamageNumber {
     timer: f32,
 }
 
-#[derive(Clone, Debug)]
-struct AttackEffect {
-    pos: Vec2,
-    timer: f32,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InvFocus {
     Inventory,
@@ -177,7 +171,6 @@ pub struct Game {
     visible_tiles: HashSet<Tile>,
     visible_rooms: Vec<String>,
     damage_numbers: Vec<DamageNumber>,
-    attack_effects: Vec<AttackEffect>,
     unsaved: bool,
     active_run: bool,
     can_resume: bool,
@@ -262,7 +255,6 @@ impl Game {
             visible_tiles: HashSet::new(),
             visible_rooms: Vec::new(),
             damage_numbers: Vec::new(),
-            attack_effects: Vec::new(),
             unsaved: false,
             active_run: false,
             can_resume: false,
@@ -350,7 +342,6 @@ impl Game {
         self.enemies.reset_triggers();
         self.death_timer = None;
         self.damage_numbers.clear();
-        self.attack_effects.clear();
         self.reset_damage_clock();
         self.door_unlocked = false;
         self.dialogue.close();
@@ -633,10 +624,6 @@ impl Game {
             return;
         }
         let pos = self.player.attack_position();
-        self.attack_effects.push(AttackEffect {
-            pos,
-            timer: crate::config::get().attack_effect_duration,
-        });
         let (attack, _) = self.equipment.combat_stats(&self.items);
         let Some(hit) = self.enemies.attack_at(pos, attack) else {
             return;
@@ -858,10 +845,6 @@ impl Game {
         }
         self.enemies.update_triggers(self.map.tile_of(self.player.target), &self.map);
 
-        for effect in self.attack_effects.iter_mut() {
-            effect.timer -= dt;
-        }
-        self.attack_effects.retain(|e| e.timer > 0.0);
         for number in self.damage_numbers.iter_mut() {
             number.timer -= dt;
             number.pos.y -= crate::config::get().damage_number_rise * dt;
@@ -1875,10 +1858,15 @@ impl Game {
         } else {
             None
         };
-        self.enemies.draw(&self.assets, visible, &self.map);
-        self.player.draw(&self.assets);
-        self.draw_attack_effects();
+        let player_after_fog = visible.is_some();
+        if !player_after_fog {
+            self.player.draw(&self.assets);
+        }
+        self.enemies.draw(&self.assets, visible, &self.map, self.player.pos);
         self.draw_fog();
+        if player_after_fog {
+            self.player.draw(&self.assets);
+        }
         self.draw_objects();
         self.draw_damage_numbers();
         set_default_camera();
@@ -1897,19 +1885,6 @@ impl Game {
             let progress = (elapsed / duration).clamp(0.0, 1.0);
             let alpha = if fading_out { progress } else { 1.0 - progress };
             draw_rectangle(0.0, 0.0, screen_width(), screen_height(), Color::new(0.0, 0.0, 0.0, alpha));
-        }
-    }
-
-    fn draw_attack_effects(&self) {
-        for effect in &self.attack_effects {
-            let alpha = (effect.timer / crate::config::get().attack_effect_duration).clamp(0.0, 1.0);
-            draw_rectangle(
-                effect.pos.x - crate::config::get().attack_effect_size / 2.0,
-                effect.pos.y - crate::config::get().attack_effect_size / 2.0,
-                crate::config::get().attack_effect_size,
-                crate::config::get().attack_effect_size,
-                Color::new(1.0, 220.0 / 255.0, 120.0 / 255.0, alpha),
-            );
         }
     }
 

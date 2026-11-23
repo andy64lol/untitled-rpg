@@ -133,6 +133,7 @@ pub struct Enemy {
     pub scale_y: f32,
     pub alpha: f32,
     pub frame_index: usize,
+    animation_index: usize,
     pub frame_timer: f32,
     pub dying: bool,
     pub death_timer: f32,
@@ -165,6 +166,7 @@ impl Enemy {
             scale_y: 1.0,
             alpha: 1.0,
             frame_index: 0,
+            animation_index: 0,
             frame_timer: 0.0,
             dying: false,
             death_timer: 0.0,
@@ -289,6 +291,22 @@ pub fn attack_cooldown(damage_speed: f32, fallback: f32) -> f32 {
     } else {
         fallback.max(0.0)
     }
+}
+
+fn enemy_is_visible(
+    enemy: &Enemy,
+    player_pos: Vec2,
+    visible: Option<&HashSet<Tile>>,
+    map: &MapData,
+) -> bool {
+    let Some(visible) = visible else {
+        return true;
+    };
+    if visible.contains(&map.tile_of(enemy.pos)) {
+        return true;
+    }
+    let radius = crate::config::get().player_light_radius_tiles * TILE_SIZE + TILE_SIZE * 0.5;
+    (enemy.pos - player_pos).length() <= radius
 }
 
 fn spawn_log_line(source: &str, id: &str, name: &str, pos: Vec2, index: usize) -> String {
@@ -529,13 +547,13 @@ impl EnemyManager {
                 if let Some(mob) = self.mobs.get(&enemy.mob) {
                     let frames = &mob.walking.frames;
                     if !frames.is_empty() {
-                        enemy.frame_index += 1;
+                        enemy.animation_index += 1;
                         if mob.walking.looped {
-                            enemy.frame_index %= frames.len();
+                            enemy.animation_index %= frames.len();
                         } else {
-                            enemy.frame_index = enemy.frame_index.min(frames.len() - 1);
+                            enemy.animation_index = enemy.animation_index.min(frames.len() - 1);
                         }
-                        enemy.frame_index = frames[enemy.frame_index];
+                        enemy.frame_index = frames[enemy.animation_index];
                     }
                 }
             }
@@ -646,15 +664,19 @@ impl EnemyManager {
         }
     }
 
-    pub fn draw(&self, assets: &Assets, visible: Option<&std::collections::HashSet<Tile>>, map: &MapData) {
+    pub fn draw(
+        &self,
+        assets: &Assets,
+        visible: Option<&HashSet<Tile>>,
+        map: &MapData,
+        player_pos: Vec2,
+    ) {
         if self.disabled {
             return;
         }
         for enemy in &self.enemies {
-            if let Some(visible) = visible {
-                if !visible.contains(&map.tile_of(enemy.pos)) {
-                    continue;
-                }
+            if !enemy_is_visible(enemy, player_pos, visible, map) {
+                continue;
             }
             let Some(mob) = self.mobs.get(&enemy.mob) else { continue };
             let Some(texture) = assets.mob_textures.get(&mob.texture_name) else { continue };
@@ -840,6 +862,20 @@ mod tests {
 
         manager.enemies[0].dying = true;
         assert!(manager.occupied_tiles(&map).is_empty());
+    }
+
+    #[test]
+    fn enemies_near_player_visible_outside_room_tiles() {
+        let map = empty_map();
+        let visible = HashSet::new();
+        let player_pos = vec2(160.0, 112.0);
+        let mut enemy = Enemy::new("snake", vec2(224.0, 112.0), 15);
+
+        assert!(enemy_is_visible(&enemy, player_pos, Some(&visible), &map));
+
+        enemy.pos = vec2(480.0, 112.0);
+        assert!(!enemy_is_visible(&enemy, player_pos, Some(&visible), &map));
+        assert!(enemy_is_visible(&enemy, player_pos, None, &map));
     }
 
     #[test]
@@ -1115,6 +1151,33 @@ mod tests {
         manager.step_toward_player(vec2(240.0, 112.0), &empty_map());
         manager.update(0.1);
         assert!(manager.enemies[0].pos.x > spawn.x);
+    }
+
+    #[test]
+    fn walking_animation_keeps_cursor_separate_from_frame_number() {
+        let mut manager = EnemyManager {
+            enemies: Vec::new(),
+            mobs: HashMap::new(),
+            spawn_points: Vec::new(),
+            spawn_names: Vec::new(),
+            armed: Vec::new(),
+            spawned: Vec::new(),
+            disabled: false,
+        };
+        let mut mob = bat_mob();
+        mob.name = "Snake".into();
+        mob.frame_duration = 0.12;
+        mob.walking = MobAnimation {
+            frames: vec![0, 1, 2, 3, 4, 5, 4, 3, 2, 1],
+            looped: true,
+        };
+        manager.mobs.insert("snake".into(), mob);
+        manager.spawn_from("test", "snake", vec2(112.0, 112.0));
+
+        for expected in [1, 2, 3, 4, 5, 4, 3, 2, 1, 0] {
+            manager.update(0.12);
+            assert_eq!(manager.enemies[0].frame_index, expected);
+        }
     }
 
     #[test]
