@@ -354,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_match_python_item_handling() {
+    fn defaults_match_item_handling() {
         let path = std::env::temp_dir().join("untitled-rpg-item-defaults.json");
         std::fs::write(
             &path,

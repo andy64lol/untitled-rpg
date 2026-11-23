@@ -1,5 +1,0 @@
-arcade>=3.3.3
-cryptography>=50.0.1
-numpy>=2.0
-Pillow>=12.0
-pytiled_parser>=2.2

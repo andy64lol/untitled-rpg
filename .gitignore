@@ -1,7 +1,3 @@
-*.pyc
+target/
 src/saves/*
 src/logs/*
-.ruff_cache/
-rust-port/target/
-rust-port/src/saves/*
-rust-port/src/logs/*

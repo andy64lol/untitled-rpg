@@ -9,7 +9,15 @@ COMMANDS (C-style calls, strings in quotes)
   give("item_id", count);   Add items to the inventory
   take("item_id", count);   Remove items from the inventory
   gold(amount);             Add gold (negative removes it)
-  spawn("enemy_id", c, r);  Spawn enemy (next to player if no tile)
+  spawn("enemy_id", c, r);  Spawn enemy (nearest spawnEnemy marker if no tile)
+  movePlayer("right");      Hold a direction as synthetic WASD input (replay)
+  stopMove();               Release synthetic movement (replay)
+  face("up");               Turn without moving
+  tick(30);                 Wait 30 frames (one action per frame)
+  log();                    Log current player/enemy state
+  log("text");              Log a custom message
+  interact();               Perform the E interaction
+  attack();                 Perform the Z attack
   flag("name");             Set a persistent flag
   unflag("name");           Clear a flag
   wait(seconds);            Pause the script
@@ -55,4 +63,23 @@ TRIGGERS
   when the player faces and interacts with it (E).
   Run one at startup with:  --script <name>
 
-Item ids are from items.json. Enemy ids are from enemy.json ("id").
+PLAYER-MOVE REPLAY
+  --player-moves <name> loads scripts/<name>.urpgs and starts the game immediately.
+  The extension is optional, so both "moves" and "moves.urpgs" work.
+  The script's movePlayer()/tick()/stopMove() calls drive the player like WASD.
+  The default init script is skipped unless --script is also passed.
+  See moves.urpgs for an example. Enemy spawns are logged with source and tile.
+  Triggers arm on the marker and fire once the player is enemy_spawn_distance_tiles
+  (default 2.0) tiles away. Returning to the marker keeps it armed.
+  New enemies spawn on the spawnEnemy point and start moving immediately.
+  Enemies and the player are solid to each other; neither can walk onto the
+  other's tile, and enemies attack from an adjacent tile.
+  damage_speed is tenths of a second between hits, so higher values attack slower.
+  Enemy damage/defense/hp come from enemies.json ("damage" is attack). Your
+  equipped attack minus enemy defense reduces enemy HP; hits show a red number
+  and flash the enemy red, and 0 HP starts the death animation.
+  Damage logs show source, enemy spawn and current positions, raw/dealt damage,
+  HP, interval since the previous damage event, and the next cooldown.
+  Spawn markers are numbered numerically (spawnEnemy2 before spawnEnemy10).
+
+Item ids are from items.json. Enemy ids are from enemies.json ("id").

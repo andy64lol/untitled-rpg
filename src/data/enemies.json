@@ -4,13 +4,19 @@
     "id": "bat",
     "speed": 160,
     "damage": 10,
+    "damage_speed": 10,
+    "hp": 10,
+    "defense": 0,
     "scripts": null
   },
   "snake": {
     "name": "Snake",
     "id": "snake",
-    "speed": 190,
-    "damage": 20,
+    "speed": 150,
+    "damage": 25,
+    "damage_speed": 20,
+    "hp": 15,
+    "defense": 1,
     "scripts": null
   }
 }

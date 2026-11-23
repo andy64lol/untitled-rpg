@@ -15,6 +15,6 @@
     "frame_size": [32, 32],
     "frame_columns": 6,
     "frame_count": 6,
-    "frame_duration": 0.10
+    "frame_duration": 0.12
   }
 }

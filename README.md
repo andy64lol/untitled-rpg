@@ -1,31 +1,36 @@
 # Untitled RPG
 
-a smol pixel-art dungeon rpg made with python + arcade, now with a Rust/macroquad port
+a smol pixel-art dungeon rpg made with Rust + macroquad
 
 Explore the dungeon, fight enemies, avoid hazards, and open the chests scattered around each map. Every chest contains a random reward, and the last unopened chest on a floor contains the key to the door. Watch out though, some chests are fakes that only mock you for being so greedy.
 
 ## Run it
 
-### Python
-
 ```bash
-python3 src/main.py
+make run
 ```
 
-### Rust
+Or use Cargo directly:
 
 ```bash
-cargo run --manifest-path rust-port/Cargo.toml
+cargo run
 ```
 
-To build or test the Rust port without running it:
+To build or test without running:
 
 ```bash
-cargo build --manifest-path rust-port/Cargo.toml
-cargo test --manifest-path rust-port/Cargo.toml
+make build
+make test
 ```
 
-The Rust port keeps its own maps, assets, scripts, saves, and logs under `rust-port/src/`. Saves are separate between the two versions, and the Rust port has no audio yet.
+Equivalent Cargo commands:
+
+```bash
+cargo build
+cargo test
+```
+
+Maps, assets, scripts, saves, and logs live under `src/`. The game has no audio yet.
 
 ## Goal
 
@@ -35,6 +40,7 @@ Open the chests on map1, take the key they hide, and give it to the door to go d
 
 - tile-based dungeon movement
 - chest rewards and inventory management
+- an inventory Shop tab where items are bought with gold
 - fake chests that mock your greed
 - equipment, combat stats, and enemies that path around walls to reach you
 - health, damage, hazards, and healing fountains
@@ -42,7 +48,7 @@ Open the chests on map1, take the key they hide, and give it to the door to go d
 - room visibility, light sources, shadows, and fog of war
 - simple `.urpgs` script events with nested `run()` calls (`init.urpgs` runs by default on a new game)
 - save and load support
-- runtime config for the Rust port in `rust-port/.config`
+- runtime config in `.config`
 
 ## Controls
 
@@ -65,11 +71,9 @@ Open the chests on map1, take the key they hide, and give it to the door to go d
 | `E` | open the config editor from the expanded debug panel |
 | `Esc` | pause, close a dialogue, return to the main screen |
 
-The Rust port's inventory has three tabs: Inventory, Equipment, and Shop. Press `Tab` to cycle tabs. In the Shop tab, use `Up`/`Down` or `W`/`S` to pick an item and `Enter`/`Space` to buy it with gold. Prices come from `items.json`, the key is never sold, and shop stock is unlimited. `R` still sells the selected item while on the Inventory tab.
+The inventory has three tabs: Inventory, Equipment, and Shop. Press `Tab` to cycle tabs. In the Shop tab, use `Up`/`Down` or `W`/`S` to pick an item and `Enter`/`Space` to buy it with gold. Prices come from `items.json`, the key is never sold, and shop stock is unlimited. `R` still sells the selected item while on the Inventory tab.
 
 ## Command line flags
-
-Both versions accept the shared flags below (`--help` is available in the Rust port):
 
 | Flag | what it does |
 | --- | --- |
@@ -83,22 +87,26 @@ Both versions accept the shared flags below (`--help` is available in the Rust p
 | `--disable-fog-of-war` | show all enemies, even on dark tiles |
 | `--no-enemies` | disable enemy spawns, movement, and contact damage |
 | `--debug` | show modified config values in a panel in the top-right corner |
-| `--show-objects` | draw map object markers and labels (Rust only) |
+| `--show-objects` | draw map object markers and labels |
 | `--script NAME` | run `scripts/NAME.urpgs` on startup (default: `init`) |
-| `--player-moves FILE` | replay `scripts/FILE.urpgs` as player input and start immediately; skips default `init` unless `--script` is also given (Rust only) |
+| `--player-moves FILE` | replay `scripts/FILE.urpgs` as player input and start immediately; skips default `init` unless `--script` is also given |
 | `--output-file` | also write logs to `logs/runX.txt` |
 
 Example:
 
 ```bash
-cargo run --manifest-path rust-port/Cargo.toml -- --lv2 --disable-rooms --output-file
+make run ARGS="--lv2 --disable-rooms --output-file"
+```
+
+Or with Cargo:
+
+```bash
+cargo run -- --lv2 --disable-rooms --output-file
 ```
 
 ## Config
 
-The Python version keeps its constants in `src/config.py`.
-
-The Rust version reads simple `key=value` overrides from `rust-port/.config` at startup. It holds window settings, player/combat values, inventory layout, lighting, effects, transition timings, death/win text, and font sizes. Missing or invalid values fall back to built-in defaults. Enemy trigger spawns arm when the player steps on the marker and fire as soon as the player is at least `enemy_spawn_distance_tiles` tiles away (default 2.0); returning to the marker keeps it armed. Enemies spawn at the `spawnEnemy` object's tile-center position and start moving immediately; the spawn log reports that position and tile. Enemies and the player are solid to each other: neither can step onto the other's tile, and enemies attack from an adjacent tile. Enemy `damage` is its attack stat and `defense`/`hp` come from `enemies.json`; contact damage subtracts your equipped defense, while your equipped attack subtracts enemy defense. Hits show a red damage number, flash the enemy red, and start the death animation at 0 HP. Enemy `damage_speed` is a delay in tenths of a second between contact hits, so higher values attack slower and each enemy gets its own `damage_speed / 10` cooldown. Damage logs include the source, enemy spawn and current positions, raw/dealt amount, HP, interval since the previous damage event, and the next cooldown. Spawn markers are numbered numerically (`spawnEnemy2` before `spawnEnemy10`).
+The game reads simple `key=value` overrides from `.config` at startup. It holds window settings, player/combat values, inventory layout, lighting, effects, transition timings, death/win text, and font sizes. Missing or invalid values fall back to built-in defaults. Enemy trigger spawns arm when the player steps on the marker and fire as soon as the player is at least `enemy_spawn_distance_tiles` tiles away (default 2.0); returning to the marker keeps it armed. Enemies spawn at the `spawnEnemy` object's tile-center position and start moving immediately; the spawn log reports that position and tile. Enemies and the player are solid to each other: neither can step onto the other's tile, and enemies attack from an adjacent tile. Enemy `damage` is its attack stat and `defense`/`hp` come from `enemies.json`; contact damage subtracts your equipped defense, while your equipped attack subtracts enemy defense. Hits show a red damage number, flash the enemy red, and start the death animation at 0 HP. Enemy `damage_speed` is a delay in tenths of a second between contact hits, so higher values attack slower and each enemy gets its own `damage_speed / 10` cooldown. Damage logs include the source, enemy spawn and current positions, raw/dealt amount, HP, interval since the previous damage event, and the next cooldown. Spawn markers are numbered numerically (`spawnEnemy2` before `spawnEnemy10`).
 
 The in-game Settings menu is a GUI alternative to the CLI flags. It can change the start map, startup script, infinite health, freecam, lights, room visibility, fog of war, enemies, the debug overlay, log output, and object markers without restarting. Changing a setting reveals the debug panel in the top-right corner.
 
@@ -106,7 +114,7 @@ The debug panel lists only values that differ from the startup config, as `key: 
 
 ## Scripts
 
-Script files use the `.urpgs` extension and live in `src/scripts/` for Python and `rust-port/src/scripts/` for Rust. See `src/scripts/README.txt` for the script syntax. The Rust port also supports `movePlayer()`, `stopMove()`, `face()`, `tick(n)`, `log()`, `interact()`, and `attack()`; `--player-moves FILE` runs a replay script immediately. Enemy spawns are logged with their source, kind, and tile.
+Script files use the `.urpgs` extension and live in `src/scripts/`. See `src/scripts/README.txt` for the script syntax. The game supports `movePlayer()`, `stopMove()`, `face()`, `tick(n)`, `log()`, `interact()`, and `attack()`; `--player-moves FILE` runs a replay script immediately. Enemy spawns are logged with their source, kind, and tile.
 
 ## License
 

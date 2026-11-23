@@ -1,4 +1,0 @@
-// init.urpgs - runs automatically when a new game starts
-// Use run("scriptName") to execute another .urpgs script.
-run("welcome");
-end();
