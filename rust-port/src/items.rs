@@ -152,6 +152,71 @@ impl Inventory {
             .map(|stack| stack.count)
             .sum()
     }
+
+    pub fn can_add(&self, item_id: &str, count: i32, stackable: bool) -> bool {
+        if count <= 0 {
+            return true;
+        }
+        let mut remaining = count;
+        if stackable {
+            for stack in self.slots.iter().flatten() {
+                if stack.item_id != item_id {
+                    continue;
+                }
+                let space = crate::config::get().max_stack - stack.count;
+                if space <= 0 {
+                    continue;
+                }
+                let taken = space.min(remaining);
+                remaining -= taken;
+                if remaining == 0 {
+                    return true;
+                }
+            }
+        }
+        for slot in &self.slots {
+            if slot.is_some() {
+                continue;
+            }
+            remaining -= crate::config::get().max_stack.min(remaining);
+            if remaining == 0 {
+                return true;
+            }
+        }
+        remaining <= 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuyError {
+    NotEnoughGold,
+    NoSpace,
+}
+
+pub fn shop_catalog(items: &HashMap<String, Item>) -> Vec<String> {
+    let mut ids: Vec<String> = items
+        .iter()
+        .filter(|(_, item)| item.item_type != "key" && item.price > 0)
+        .map(|(id, _)| id.clone())
+        .collect();
+    ids.sort_by(|a, b| {
+        let a_price = items.get(a).map_or(0, |item| item.price);
+        let b_price = items.get(b).map_or(0, |item| item.price);
+        a_price.cmp(&b_price).then_with(|| a.cmp(b))
+    });
+    ids
+}
+
+pub fn buy_item(inventory: &mut Inventory, item_id: &str, item: &Item) -> Result<(), BuyError> {
+    if inventory.gold < item.price {
+        return Err(BuyError::NotEnoughGold);
+    }
+    if !inventory.can_add(item_id, 1, item.stackable) {
+        return Err(BuyError::NoSpace);
+    }
+    inventory.add(item_id, 1, item.stackable);
+    inventory.gold -= item.price;
+    Ok(())
 }
 
 #[derive(Clone, Debug, Default)]
@@ -249,6 +314,43 @@ mod tests {
         let mut ids: Vec<_> = items.keys().map(String::as_str).collect();
         ids.sort_unstable();
         assert_eq!(rewards, ids);
+    }
+
+    #[test]
+    fn shop_catalog_excludes_key_and_sorts_by_price() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/data/items.json");
+        let items = load_items(&path);
+        let catalog = shop_catalog(&items);
+        assert!(!catalog.iter().any(|id| id == "key"));
+        assert_eq!(catalog.first().map(String::as_str), Some("apple"));
+        assert_eq!(catalog.last().map(String::as_str), Some("titanium_sword"));
+        assert_eq!(catalog.len(), items.len() - 1);
+    }
+
+    #[test]
+    fn buying_checks_gold_and_space_before_charging() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/data/items.json");
+        let items = load_items(&path);
+        let mut inventory = Inventory {
+            slots: vec![None; 12],
+            gold: 0,
+        };
+
+        assert_eq!(buy_item(&mut inventory, "apple", &items["apple"]), Err(BuyError::NotEnoughGold));
+        assert_eq!(inventory.gold, 0);
+
+        inventory.gold = 5;
+        assert_eq!(buy_item(&mut inventory, "apple", &items["apple"]), Ok(()));
+        assert_eq!(inventory.gold, 0);
+        assert_eq!(inventory.count("apple"), 1);
+
+        inventory.gold = 100;
+        inventory.slots = vec![Some(Stack { item_id: "key".into(), count: 1 }); 12];
+        assert_eq!(
+            buy_item(&mut inventory, "titanium_sword", &items["titanium_sword"]),
+            Err(BuyError::NoSpace)
+        );
+        assert_eq!(inventory.gold, 100);
     }
 
     #[test]

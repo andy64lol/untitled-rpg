@@ -8,7 +8,7 @@ use crate::Cli;
 use crate::config;
 use crate::config::*;
 use crate::enemies::EnemyManager;
-use crate::items::{draw_quality, Equipment, Inventory, Item, Stack};
+use crate::items::{buy_item, draw_quality, shop_catalog, BuyError, Equipment, Inventory, Item, Stack};
 use crate::map::{MapData, Tile};
 pub use crate::map::log_line;
 use crate::player::Player;
@@ -136,6 +136,7 @@ struct DamageNumber {
 enum InvFocus {
     Inventory,
     Equipment,
+    Shop,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -193,6 +194,8 @@ pub struct Game {
     inv_focus: InvFocus,
     inv_index: usize,
     equip_index: usize,
+    shop_index: usize,
+    shop_message: String,
     camera: Vec2,
     freecam: Vec2,
     heart_shake_time: f32,
@@ -277,6 +280,8 @@ impl Game {
             inv_focus: InvFocus::Inventory,
             inv_index: 0,
             equip_index: 0,
+            shop_index: 0,
+            shop_message: String::new(),
             camera: vec2(0.0, 0.0),
             freecam: Vec2::ZERO,
             heart_shake_time: 0.0,
@@ -350,9 +355,12 @@ impl Game {
         self.active_run = true;
         self.can_resume = true;
         self.screen = Screen::Game;
+        self.inventory_open = false;
         self.inv_focus = InvFocus::Inventory;
         self.inv_index = 0;
         self.equip_index = 0;
+        self.shop_index = 0;
+        self.shop_message.clear();
         self.freecam = Vec2::ZERO;
         self.heart_shake_time = 0.0;
         self.camera = self.player.pos;
@@ -1176,7 +1184,8 @@ impl Game {
             if pressed.contains(&KeyCode::Tab) {
                 self.inv_focus = match self.inv_focus {
                     InvFocus::Inventory => InvFocus::Equipment,
-                    InvFocus::Equipment => InvFocus::Inventory,
+                    InvFocus::Equipment => InvFocus::Shop,
+                    InvFocus::Shop => InvFocus::Inventory,
                 };
             }
             self.handle_inventory_keys(pressed);
@@ -1189,6 +1198,7 @@ impl Game {
                 KeyCode::I => {
                     self.screen = Screen::Game;
                     self.inventory_open = true;
+                    self.shop_message.clear();
                 }
                 KeyCode::Escape => {
                     if self.active_run && !self.player.dead {
@@ -1488,6 +1498,25 @@ impl Game {
                     self.equipment_unequip();
                 }
             }
+            InvFocus::Shop => {
+                let count = shop_catalog(&self.items).len().max(1) as i32;
+                self.shop_index = self.shop_index.min(count as usize - 1);
+                if pressed.contains(&KeyCode::Up) || pressed.contains(&KeyCode::W) {
+                    self.shop_index = (self.shop_index as i32 - 1).rem_euclid(count) as usize;
+                }
+                if pressed.contains(&KeyCode::Down) || pressed.contains(&KeyCode::S) {
+                    self.shop_index = (self.shop_index as i32 + 1).rem_euclid(count) as usize;
+                }
+                if pressed.contains(&KeyCode::Left) || pressed.contains(&KeyCode::A) {
+                    self.inv_focus = InvFocus::Equipment;
+                }
+                if pressed.contains(&KeyCode::Right) || pressed.contains(&KeyCode::D) {
+                    self.inv_focus = InvFocus::Inventory;
+                }
+                if pressed.contains(&KeyCode::Enter) || pressed.contains(&KeyCode::Space) {
+                    self.inventory_buy();
+                }
+            }
         }
     }
 
@@ -1518,6 +1547,20 @@ impl Game {
         self.inventory.remove_at(self.inv_index, 1);
         self.inventory.gold += item.price;
         self.unsaved = true;
+    }
+
+    fn inventory_buy(&mut self) {
+        let catalog = shop_catalog(&self.items);
+        let Some(item_id) = catalog.get(self.shop_index).cloned() else { return };
+        let Some(item) = self.items.get(&item_id).cloned() else { return };
+        match buy_item(&mut self.inventory, &item_id, &item) {
+            Ok(()) => {
+                self.shop_message = format!("Bought {}", item.name);
+                self.unsaved = true;
+            }
+            Err(BuyError::NotEnoughGold) => self.shop_message = "Not enough gold".into(),
+            Err(BuyError::NoSpace) => self.shop_message = "Inventory full".into(),
+        }
     }
 
     fn equipment_unequip(&mut self) {
@@ -1630,9 +1673,12 @@ impl Game {
         self.script_flags = state.script_flags.into_iter().collect();
         self.scripts.clear();
         self.death_timer = None;
+        self.inventory_open = false;
         self.inv_focus = InvFocus::Inventory;
         self.inv_index = 0;
         self.equip_index = 0;
+        self.shop_index = 0;
+        self.shop_message.clear();
         self.freecam = Vec2::ZERO;
         self.heart_shake_time = 0.0;
         self.camera = self.player.pos;
@@ -1766,7 +1812,7 @@ impl Game {
         let rows = [
             "CONTROLS",
             "WASD move   E/Enter interact   Z attack",
-            "I inventory   Tab switch inventory/equipment",
+            "I inventory   Tab switch inventory/equipment/shop",
             "Arrow keys navigate menus and inventory",
             "H spawn at nearest enemy marker",
             "F1 toggle this help   Esc/Enter close",
@@ -2467,6 +2513,12 @@ impl Game {
     fn draw_inventory(&self) {
         draw_rectangle(0.0, 0.0, screen_width(), screen_height(), INV_DIM_COLOR);
 
+        let catalog = shop_catalog(&self.items);
+        let shop_row_h = 26.0;
+        let shop_panel_w = 320.0;
+        let shop_panel_h = catalog.len().max(1) as f32 * shop_row_h
+            + crate::config::get().panel_padding * 2.0
+            + crate::config::get().label_height;
         let equip_grid_h = 3.0 * crate::config::get().equipment_slot_size + 2.0 * crate::config::get().equipment_slot_gap;
         let equip_panel_w = crate::config::get().equipment_slot_size + crate::config::get().panel_padding * 2.0;
         let equip_panel_h = equip_grid_h + crate::config::get().panel_padding * 2.0 + crate::config::get().label_height;
@@ -2474,8 +2526,10 @@ impl Game {
         let inv_grid_h = crate::config::get().rows as f32 * crate::config::get().slot_size + (crate::config::get().rows as f32 - 1.0) * crate::config::get().slot_gap;
         let inv_panel_w = inv_grid_w + crate::config::get().panel_padding * 2.0;
         let inv_panel_h = inv_grid_h + crate::config::get().panel_padding * 2.0 + crate::config::get().label_height;
-        let total_w = equip_panel_w + crate::config::get().panel_gap + inv_panel_w;
-        let total_h = equip_panel_h.max(inv_panel_h);
+        let left_panel_w = if self.inv_focus == InvFocus::Shop { shop_panel_w } else { equip_panel_w };
+        let left_panel_h = if self.inv_focus == InvFocus::Shop { shop_panel_h } else { equip_panel_h };
+        let total_w = left_panel_w + crate::config::get().panel_gap + inv_panel_w;
+        let total_h = left_panel_h.max(inv_panel_h);
         let left = (screen_width() - total_w) / 2.0;
         let top = (screen_height() - total_h) / 2.0;
         let bottom = top + total_h;
@@ -2486,10 +2540,76 @@ impl Game {
         let outer_bottom = bottom + crate::config::get().panel_gap / 2.0;
         draw_rectangle(outer_left, outer_top, outer_right - outer_left, outer_bottom - outer_top, PANEL_COLOR);
         draw_rectangle_lines(outer_left, outer_top, outer_right - outer_left, outer_bottom - outer_top, 2.0, INV_BORDER_COLOR);
-        draw_text_at("INVENTORY", screen_width() / 2.0, top - crate::config::get().panel_gap / 2.0 - 11.0, 22, INV_ACCENT_COLOR, &self.assets.font, 0.5, 0.5);
 
-        self.draw_equipment_panel(left, top, equip_panel_w, equip_panel_h, equip_grid_h);
-        self.draw_inventory_panel(left + equip_panel_w + crate::config::get().panel_gap, top, inv_panel_w, inv_panel_h, inv_grid_h);
+        let tabs = [
+            ("INVENTORY", InvFocus::Inventory),
+            ("EQUIPMENT", InvFocus::Equipment),
+            ("SHOP", InvFocus::Shop),
+        ];
+        let tab_w = 112.0;
+        let tab_gap = 24.0;
+        let tabs_w = tab_w * tabs.len() as f32 + tab_gap * (tabs.len() - 1) as f32;
+        let tab_y = top - crate::config::get().panel_gap / 2.0 - 11.0;
+        for (index, (label, focus)) in tabs.iter().enumerate() {
+            let x = screen_width() / 2.0 - tabs_w / 2.0 + index as f32 * (tab_w + tab_gap);
+            let active = self.inv_focus == *focus;
+            if active {
+                draw_rectangle(x, tab_y - 10.0, tab_w, 20.0, SLOT_SELECTED_COLOR);
+                draw_rectangle_lines(x, tab_y - 10.0, tab_w, 20.0, 1.0, INV_ACCENT_COLOR);
+            }
+            draw_text_at(label, x + tab_w / 2.0, tab_y, 13,
+                if active { INV_ACCENT_COLOR } else { MENU_MUTED_TEXT }, &self.assets.font, 0.5, 0.5);
+        }
+
+        if self.inv_focus == InvFocus::Shop {
+            self.draw_shop_panel(left, top, left_panel_w, left_panel_h, shop_row_h, &catalog);
+        } else {
+            self.draw_equipment_panel(left, top, equip_panel_w, equip_panel_h, equip_grid_h);
+        }
+        self.draw_inventory_panel(left + left_panel_w + crate::config::get().panel_gap, top, inv_panel_w, inv_panel_h, inv_grid_h);
+    }
+
+    fn draw_shop_panel(&self, left: f32, top: f32, width: f32, height: f32, row_h: f32, catalog: &[String]) {
+        let focused = self.inv_focus == InvFocus::Shop;
+        let pad = crate::config::get().panel_padding;
+        draw_rectangle(left, top, width, height, PANEL_COLOR);
+        draw_rectangle_lines(left, top, width, height, 2.0,
+            if focused { INV_SELECTED_BORDER } else { INV_BORDER_COLOR });
+        draw_rectangle(left, top, width, pad, INV_HEADER_COLOR);
+        draw_text_at("SHOP", left + pad / 2.0, top + pad / 2.0, 13, INV_ACCENT_COLOR, &self.assets.font, 0.0, 0.5);
+
+        if catalog.is_empty() {
+            draw_text_at("Nothing for sale", left + pad, top + pad + row_h / 2.0,
+                12, TEXT_COLOR, &self.assets.font, 0.0, 0.5);
+        }
+        let selected = self.shop_index.min(catalog.len().saturating_sub(1));
+        for (index, item_id) in catalog.iter().enumerate() {
+            let Some(item) = self.items.get(item_id) else { continue };
+            let y = top + pad + index as f32 * row_h;
+            let is_selected = focused && index == selected;
+            if is_selected {
+                draw_rectangle(left + pad / 2.0, y, width - pad, row_h, SLOT_SELECTED_COLOR);
+                draw_rectangle_lines(left + pad / 2.0, y, width - pad, row_h, 1.0, INV_SELECTED_BORDER);
+            }
+            if let Some(texture) = self.assets.item_texture(&item.texture) {
+                draw_texture_ex(&texture, left + pad, y + (row_h - 18.0) / 2.0, WHITE,
+                    DrawTextureParams { dest_size: Some(vec2(18.0, 18.0)), ..Default::default() });
+            }
+            draw_text_at(&format!("{}  {}g", item.name, item.price), left + pad + 24.0, y + row_h / 2.0,
+                11, if is_selected { INV_ACCENT_COLOR } else { TEXT_COLOR }, &self.assets.font, 0.0, 0.5);
+        }
+
+        let footer = if !self.shop_message.is_empty() {
+            self.shop_message.clone()
+        } else if let Some(item_id) = catalog.get(selected) {
+            self.items.get(item_id)
+                .map(|item| format!("{} · Enter buy {}g", item.name, item.price))
+                .unwrap_or_else(|| "Enter buy".into())
+        } else {
+            "No items".into()
+        };
+        draw_text_at(&footer, left + pad, top + height - crate::config::get().label_height / 2.0,
+            11, INV_ACCENT_COLOR, &self.assets.font, 0.0, 0.5);
     }
 
     fn draw_equipment_panel(&self, left: f32, top: f32, width: f32, height: f32, grid_h: f32) {

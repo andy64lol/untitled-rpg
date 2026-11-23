@@ -52,7 +52,7 @@ Open the chests on map1, take the key they hide, and give it to the door to go d
 | `E` / `Enter` | interact |
 | `Z` | attack or skip dialogue text |
 | `I` | open/close your inventory |
-| `Tab` | switch inventory/equipment focus |
+| `Tab` | switch inventory/equipment/shop tab |
 | Arrow keys | navigate menus/inventory, or pan the camera with `--freecam` |
 | `S` | open Settings from the main menu |
 | `1` - `6` | choose a save slot from the main menu or slot screen |
@@ -64,6 +64,8 @@ Open the chests on map1, take the key they hide, and give it to the door to go d
 | `M` | minimize/expand the debug panel |
 | `E` | open the config editor from the expanded debug panel |
 | `Esc` | pause, close a dialogue, return to the main screen |
+
+The Rust port's inventory has three tabs: Inventory, Equipment, and Shop. Press `Tab` to cycle tabs. In the Shop tab, use `Up`/`Down` or `W`/`S` to pick an item and `Enter`/`Space` to buy it with gold. Prices come from `items.json`, the key is never sold, and shop stock is unlimited. `R` still sells the selected item while on the Inventory tab.
 
 ## Command line flags
 
